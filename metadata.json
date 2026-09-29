@@ -1,0 +1,6 @@
+{
+  "name": "The House of Devil",
+  "description": "A chilling, immersive 3D psychological horror game set outside the abandoned House of Devil with atmospheric fog, 3D positional audio, and cinematic first-person exploration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

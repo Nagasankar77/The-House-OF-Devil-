@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Cinzel', serif;
+    background-color: #030303;
+    color: #e6e4df;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+  }
+}
+
+.font-horror-title {
+  font-family: 'Cinzel Decorative', 'Cinzel', serif;
+  letter-spacing: 0.2em;
+}
+
+.font-creepy {
+  font-family: 'Special Elite', cursive;
+}
+
+.font-decay {
+  font-family: 'Creepster', cursive;
+}
+
+/* Film grain subtle overlay */
+.horror-film-grain {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.08'/%3E%3C/svg%3E");
+}
+
+/* Horror Glitch Text Effect */
+@keyframes horrorGlitch {
+  0% {
+    transform: translate(0);
+    opacity: 0.95;
+    text-shadow: -1px 0 #7f1d1d, 1px 0 #1e293b;
+  }
+  15% {
+    transform: translate(-1px, 1px);
+    opacity: 0.9;
+    text-shadow: 2px -1px #991b1b, -2px 1px #0f172a;
+  }
+  17% {
+    transform: translate(2px, -1px);
+    opacity: 0.7;
+    text-shadow: -2px 0 #b91c1c, 2px 0 #111827;
+  }
+  19% {
+    transform: translate(0);
+    opacity: 1;
+    text-shadow: 0 0 10px rgba(185, 28, 28, 0.4);
+  }
+  60% {
+    transform: translate(0);
+    opacity: 0.95;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
+  }
+  62% {
+    transform: translate(-2px, 0);
+    opacity: 0.75;
+    text-shadow: 3px 0 #991b1b, -3px 0 #000;
+  }
+  64% {
+    transform: translate(1px, -1px);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(0);
+    opacity: 0.95;
+    text-shadow: -1px 0 #7f1d1d, 1px 0 #0f172a;
+  }
+}
+
+.animate-horror-glitch {
+  animation: horrorGlitch 4s infinite ease-in-out;
+}
+
+@keyframes pulseFog {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 0.65; transform: scale(1.04); }
+}
+
+.animate-fog-pulse {
+  animation: pulseFog 8s infinite ease-in-out;
+}
