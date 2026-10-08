@@ -13,6 +13,8 @@ import { PlayerController } from '../engine/PlayerController';
 import { InGameStoryDirector, StorySubtitleData } from '../engine/cinematic/InGameStoryDirector';
 import { PostStoryHorrorScareDirector } from '../engine/cinematic/PostStoryHorrorScareDirector';
 import { BungalowHammerDirector } from '../engine/cinematic/BungalowHammerDirector';
+import { BatSwarm } from '../engine/cinematic/BatSwarm';
+import { GhostEntityFactory, DistortedGhostRig } from '../components/cinematic/GhostEntity';
 import { GameState, GameSettings, PlayerControls, InteractionPrompt, RitualState, PerformanceStats, StoryPoster } from '../types';
 import { OpeningScreen } from '../components/OpeningScreen';
 import { MainMenu } from '../components/MainMenu';
@@ -144,6 +146,7 @@ export const GROUND_FLOOR_CLUE_IDS = [
   'CLUE_STUDY_LETTER',
   'CLUE_DINING_CLOCK',
   'CLUE_STORAGE_LOG',
+  'CLUE_STORAGE_MIRROR',
 ];
 
 // ==================== PRIMARY REACT COMPONENT ====================
@@ -210,8 +213,11 @@ export default function Game() {
   const [performanceStats, setPerformanceStats] = useState<PerformanceStats | null>(null);
   const [showPerformanceHud, setShowPerformanceHud] = useState(false);
 
-  // Internal state tracking explored clues
+  // Internal state tracking explored clues and house events
   const exploredCluesRef = useRef<Set<string>>(new Set());
+  const enteredHouseRef = useRef(false);
+  const staircaseCreakTriggeredRef = useRef(false);
+  const lastPointerLockExitRef = useRef<number>(0);
 
   // Controls input reference
   const controlsRef = useRef<PlayerControls>({
@@ -234,9 +240,13 @@ export default function Game() {
   const settingsRef = useRef<GameSettings>(settings);
   settingsRef.current = settings;
 
-  // Gate scare state
-  const gateScarePhaseRef = useRef<'IDLE' | 'CHAIN_MOVING' | 'PADLOCK_SHAKE' | 'SILENCE' | 'AWAITING_INSPECT' | 'INSPECTING_FOCUS' | 'FREE_LOOK' | 'COMPLETED'>('IDLE');
-  const gateScareTimerRef = useRef(0);
+  // Gate hit & cinematic bat swarm state
+  const gateHitBusyRef = useRef(false);
+  const batSwarmRef = useRef<BatSwarm | null>(null);
+  const activeGateGhostRig = useRef<DistortedGhostRig | null>(null);
+  const gateGhostLights = useRef<THREE.PointLight[]>([]);
+  const gateGhostTimer = useRef(0);
+  const gateGhostPhase = useRef<'NONE' | 'SPAWNED' | 'DISSOLVING' | 'DONE'>('NONE');
 
   // ==================== THREE.JS SETUP & INITIALIZATION ====================
   useEffect(() => {
@@ -253,12 +263,17 @@ export default function Game() {
         ...prev,
         storyModeActive: false,
         storyModeCompleted: true,
-        currentObjective: 'FIND YAMINI',
+        currentObjective: 'INSPECT THE MAIN GATE',
       }));
-      setObjectiveBanner({ title: 'OBJECTIVE UPDATED', subtitle: 'FIND YAMINI' });
-      setTimeout(() => setObjectiveBanner(null), 5500);
+      setObjectiveBanner({ title: 'MAIN GATE AHEAD', subtitle: 'INSPECT THE MAIN ENTRANCE GATE' });
+      setTimeout(() => setObjectiveBanner(null), 5000);
+
+      // Re-enable all controls immediately: WASD, mouse look, mobile virtual joystick & touch
       ctx.player.setMenuMode(false);
-      ctx.postStoryScare.startScareSequence();
+      ctx.player.isInspecting = false;
+      ctx.player.setCameraInputLocked(false);
+      ctx.player.isStoryModeActive = false;
+      ctx.player.resetMovement();
     };
 
     // Post-story jump scare callbacks
@@ -369,51 +384,100 @@ export default function Game() {
           ctx.camera.getWorldPosition(camPos);
           horrorAudio.updateListener(camPos, camDir, isMoving);
 
-          // Gate proximity audio & fog update
-          ctx.environment.updateGateProximity(distToGate);
+          const playerPos = ctx.player.position;
+
+          // Gate proximity audio & fog update (transitions to indoor atmospheric fog when entering house)
+          ctx.environment.updateGateProximity(distToGate, playerPos.z);
           horrorAudio.updateGateProximity(distToGate);
 
-          // ==================== STAIRCASE ELEVATION LOGIC ====================
-          // Inside Bungalow Grand Staircase: z from -68.5 to -75.5, |x| <= 1.35
-          // Ground floor floorY = 1.45, Second floor floorY = 5.45
-          const playerPos = ctx.player.position;
-          let targetElevation = playerPos.y;
-
-          if (playerPos.z <= -58.5) {
-            // Player is inside the bungalow
-            if (playerPos.z <= -68.5 && playerPos.z >= -75.5 && Math.abs(playerPos.x) <= 1.35) {
-              // Climbing Grand Staircase
-              const stairProg = (-68.5 - playerPos.z) / 7.0; // 0 to 1
-              targetElevation = GAME_CONFIG.GROUND_FLOOR_Y + stairProg * (GAME_CONFIG.SECOND_FLOOR_Y - GAME_CONFIG.GROUND_FLOOR_Y);
-              if (isMoving && Math.random() < 0.08) {
-                horrorAudio.playWallCreak(0.5);
-              }
-            } else if (playerPos.z < -75.5 || (playerPos.y > 3.5 && playerPos.z <= -58.5)) {
-              // Second floor level
-              targetElevation = GAME_CONFIG.SECOND_FLOOR_Y;
-            } else {
-              // Ground floor level
-              targetElevation = GAME_CONFIG.GROUND_FLOOR_Y;
-            }
+          // Subtle wooden creaks while ascending/descending Grand Staircase
+          if (
+            playerPos.z <= -68.5 &&
+            playerPos.z >= -75.5 &&
+            Math.abs(playerPos.x) <= 1.35 &&
+            isMoving &&
+            Math.random() < 0.05
+          ) {
+            horrorAudio.playWallCreak(0.4);
           }
-          ctx.player.position.y = THREE.MathUtils.lerp(ctx.player.position.y, targetElevation, Math.min(1, dt * 10.0));
 
           // Bungalow interior subtle horror audio update
           ctx.bungalowInterior.update(dt, playerPos);
 
+          // Animate gate ghost entity if active during Hit 3 horror event
+          if (activeGateGhostRig.current && gateGhostPhase.current === 'SPAWNED') {
+            gateGhostTimer.current += dt;
+            activeGateGhostRig.current.updateAnimation(gateGhostTimer.current, 0.35);
+          }
+
           // Gate Opening Animation Progression
           if (curRitual.gateOpening && gateOpenProg < 1.0) {
-            gateOpenProg += dt * 0.28;
+            gateOpenProg += dt * 0.28; // Believable smooth swing (~3.5s)
             ctx.environment.setGateOpenProgress(gateOpenProg);
             if (gateOpenProg >= 1.0) {
-              setRitualState((prev) => ({ ...prev, gateOpening: false, gateFullyOpen: true }));
+              setRitualState((prev) => ({
+                ...prev,
+                gateOpening: false,
+                gateFullyOpen: true,
+                gatePhase: 'GATE_OPEN',
+                currentObjective: 'PASS THROUGH THE MAIN GATE',
+              }));
+              setObjectiveBanner({ title: 'GATE UNLOCKED', subtitle: 'PASS THROUGH THE MAIN GATE' });
+              setTimeout(() => setObjectiveBanner(null), 4000);
+
+              // 13. BATS — SHORT PAUSE THEN BATS SUDDENLY FLY OUT FROM INSIDE BUNGALOW ENTRANCE
+              setTimeout(() => {
+                if (!batSwarmRef.current && contextRef.current) {
+                  const bSwarm = new BatSwarm(contextRef.current.scene);
+                  batSwarmRef.current = bSwarm;
+                  bSwarm.trigger();
+                  bSwarm.onCompleted = () => {
+                    batSwarmRef.current = null;
+                  };
+                }
+              }, 600);
             }
           }
 
+          // Update active bat swarm flight
+          if (batSwarmRef.current) {
+            batSwarmRef.current.update(dt);
+          }
+
           // Bungalow Door Opening Animation Progression
-          if (curRitual.bungalowDoorOpen && doorOpenProg < 1.0) {
-            doorOpenProg += dt * 0.35;
+          if ((curRitual.bungalowDoorOpen || curRitual.bungalowDoorOpening) && doorOpenProg < 1.0) {
+            doorOpenProg += dt * 0.28;
             ctx.environment.setBungalowDoorOpenProgress(doorOpenProg);
+            if (doorOpenProg >= 1.0) {
+              setRitualState((prev) => ({ ...prev, bungalowDoorOpening: false, bungalowDoorOpen: true }));
+            }
+          }
+
+          // Check if player entered the bungalow interior (z <= -59.5)
+          if (playerPos.z <= -59.5 && !enteredHouseRef.current) {
+            enteredHouseRef.current = true;
+            setObjectiveBanner({ title: 'THE ABANDONED BUNGALOW', subtitle: 'ENTER THE HOUSE' });
+            setRitualState((prev) => ({ ...prev, currentObjective: 'ENTER THE HOUSE' }));
+            setTimeout(() => {
+              setObjectiveBanner({ title: 'OBJECTIVE UPDATED', subtitle: 'FIND CLUES ABOUT YAMINI' });
+              setRitualState((prev) => ({ ...prev, currentObjective: 'FIND CLUES ABOUT YAMINI' }));
+              setTimeout(() => setObjectiveBanner(null), 5000);
+            }, 4200);
+          }
+
+          // Check if player approaches the staircase foyer on ground floor
+          if (
+            playerPos.z <= -66.5 &&
+            playerPos.z >= -69.5 &&
+            Math.abs(playerPos.x) <= 2.2 &&
+            playerPos.y < 3.0 &&
+            !staircaseCreakTriggeredRef.current
+          ) {
+            staircaseCreakTriggeredRef.current = true;
+            horrorAudio.playWallCreak(0.5);
+            setTimeout(() => {
+              horrorAudio.playSubtleWhisper('BEHIND');
+            }, 800);
           }
 
           // ==================== INTERACTION SYSTEM ====================
@@ -441,59 +505,55 @@ export default function Game() {
             minCandidateDist = lamp2Dist;
           }
 
-          // 4. Lamp 3 (dist <= 3.2m, only when revealed)
+          // 4. Lamp 3 (dist <= 3.2m, only when spawned beside main gate)
           const lamp3Dist = playerPos.distanceTo(ctx.environment.lamp3Position);
           if (curRitual.lamp3Revealed && !curRitual.lamp3Lit && lamp3Dist <= 3.2 && lamp3Dist < minCandidateDist) {
-            nextPrompt = { type: 'LAMP_3', promptText: '[E] Light Lamp', subText: 'Stone Crevice', distance: lamp3Dist };
+            nextPrompt = { type: 'LAMP_3', promptText: '[E] ACTIVATE LAMP', subText: 'Beside Main Gate', distance: lamp3Dist };
             minCandidateDist = lamp3Dist;
           }
 
-          // 5. Old Iron Key (dist <= 3.0m)
-          const keyDist = playerPos.distanceTo(ctx.environment.keyPosition);
-          if (curRitual.keyRevealed && !curRitual.keyCollected && keyDist <= 3.0 && keyDist < minCandidateDist) {
-            nextPrompt = { type: 'GATE_KEY', promptText: '[E] Take Old Iron Key', subText: 'Pillar Compartment', distance: keyDist };
-            minCandidateDist = keyDist;
-          }
-
-          // 6. Main Gate (dist <= 4.2m)
-          if (distToGate <= 4.2 && !curRitual.gateFullyOpen && distToGate < minCandidateDist) {
-            if (curRitual.keyCollected && !curRitual.gateUnlocked) {
-              nextPrompt = { type: 'GATE_CHAIN', promptText: '[E] Unlock Gate', subText: 'Use Old Iron Key', distance: distToGate };
-              minCandidateDist = distToGate;
-            } else if (!curRitual.gateUnlocked) {
-              nextPrompt = { type: 'GATE_CHAIN', promptText: '[E] Inspect Gate', subText: 'Chained Shut', distance: distToGate };
-              minCandidateDist = distToGate;
+          // 5. Main Gate Interaction Zone
+          // Gate is at z = -22.0. Allow player to stand naturally in front of it (z in [-22.2, -16.5], |x| <= 3.5)
+          const inGateZone = playerPos.z >= -22.2 && playerPos.z <= -16.5 && Math.abs(playerPos.x) <= 3.5;
+          if ((inGateZone || distToGate <= 4.8) && !curRitual.gateFullyOpen && !curRitual.gateOpening && distToGate < minCandidateDist) {
+            if (!curRitual.hasHammer) {
+              nextPrompt = {
+                type: 'GATE_CHAIN',
+                promptText: '[E] INSPECT GATE',
+                subText: 'Chained Shut: Heavy Iron Padlock',
+                distance: distToGate,
+              };
+            } else {
+              nextPrompt = {
+                type: 'GATE_CHAIN',
+                promptText: '[E] HIT / OPEN GATE',
+                subText: 'Break Gate Chains with Hammer',
+                distance: distToGate,
+              };
             }
+            minCandidateDist = distToGate;
           }
 
-          // 7. Veranda Crate Heavy Hammer Pickup (x: -2.8, y: 2.1, z: -57.2)
-          const hammerPos = new THREE.Vector3(-2.8, 2.1, -57.2);
-          const hammerDist = playerPos.distanceTo(hammerPos);
-          if (!curRitual.hasHammer && hammerDist <= 3.2 && hammerDist < minCandidateDist) {
-            nextPrompt = { type: 'HAMMER_PICKUP', promptText: '[E] Take Heavy Iron Hammer', subText: 'Veranda Tool Crate', distance: hammerDist };
-            minCandidateDist = hammerDist;
-          }
-
-          // 8. Bungalow Double Entrance Door (x: 0, y: 1.45, z: -58.95)
+          // 6. Bungalow Double Entrance Door (x: 0, y: 1.45, z: -58.95)
           const doorPos = new THREE.Vector3(0, 1.45, -58.95);
           const doorDist = playerPos.distanceTo(doorPos);
-          if (doorDist <= 3.5 && !curRitual.bungalowDoorOpen && doorDist < minCandidateDist) {
-            if (curRitual.hasHammer) {
+          if (doorDist <= 3.8 && !curRitual.bungalowDoorOpen && !curRitual.bungalowDoorOpening && doorDist < minCandidateDist) {
+            if (curRitual.hasHammer && (curRitual.bungalowDoorHits || 0) < 3) {
               const hitCount = curRitual.bungalowDoorHits || 0;
               const subMsg = hitCount === 0 ? 'Strike #1: Break Door Barricade' : hitCount === 1 ? 'Strike #2: Break Heavy Latch' : 'Strike #3: Smash Door Lock';
-              nextPrompt = { type: 'BUNGALOW_DOOR_HIT', promptText: '[E] Break Door', subText: subMsg, distance: doorDist };
+              nextPrompt = { type: 'BUNGALOW_DOOR_HIT', promptText: '[E] BREAK DOOR', subText: subMsg, distance: doorDist };
               minCandidateDist = doorDist;
             } else {
-              nextPrompt = { type: 'BUNGALOW_DOOR_INSPECT', promptText: '[E] Inspect Door', subText: 'Heavily Barricaded', distance: doorDist };
+              nextPrompt = { type: 'BUNGALOW_DOOR_ENTER', promptText: '[E] ENTER BUNGALOW', subText: 'Old Wooden Front Door', distance: doorDist };
               minCandidateDist = doorDist;
             }
           }
 
-          // 9. Bungalow Interior Story Clues (6 rich clue stations)
+          // 9. Bungalow Interior Story Clues
           if (playerPos.z <= -58.5) {
             for (const clue of ctx.bungalowInterior.interiorClues) {
               const cDist = playerPos.distanceTo(clue.position);
-              if (cDist <= 2.8 && cDist < minCandidateDist) {
+              if (cDist <= 3.2 && cDist < minCandidateDist) {
                 nextPrompt = {
                   type: 'NOTE',
                   promptText: `[E] Examine ${clue.name}`,
@@ -663,8 +723,23 @@ export default function Game() {
     const handleMouseDown = (e: MouseEvent) => {
       isMouseDownRef.current = true;
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-      if (gameState === 'PLAYING' && containerRef.current && (e.target as HTMLElement).tagName === 'CANVAS') {
-        containerRef.current.requestPointerLock?.();
+      if (
+        gameState === 'PLAYING' &&
+        containerRef.current &&
+        document.pointerLockElement !== containerRef.current &&
+        performance.now() - lastPointerLockExitRef.current > 1300 &&
+        (e.target as HTMLElement).tagName === 'CANVAS'
+      ) {
+        try {
+          const res = containerRef.current.requestPointerLock?.();
+          if (res && typeof (res as unknown as Promise<void>).catch === 'function') {
+            (res as unknown as Promise<void>).catch(() => {
+              // Silently ignore browser cooldown rejection
+            });
+          }
+        } catch {
+          // Silently ignore synchronous pointer lock exceptions
+        }
       }
     };
 
@@ -672,11 +747,34 @@ export default function Game() {
       isMouseDownRef.current = false;
     };
 
+    const handlePointerLockChange = () => {
+      if (document.pointerLockElement === null) {
+        lastPointerLockExitRef.current = performance.now();
+      }
+    };
+
+    const handlePointerLockError = () => {
+      lastPointerLockExitRef.current = performance.now();
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (
+        event?.reason?.message?.includes?.('Pointer lock') ||
+        event?.reason?.name === 'SecurityError' ||
+        event?.reason?.name === 'NotAllowedError'
+      ) {
+        event.preventDefault();
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('pointerlockchange', handlePointerLockChange);
+    document.addEventListener('pointerlockerror', handlePointerLockError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
@@ -684,8 +782,49 @@ export default function Game() {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('pointerlockchange', handlePointerLockChange);
+      document.removeEventListener('pointerlockerror', handlePointerLockError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
   }, [gameState, settings.cameraSensitivity, activePrompt, ritualState]);
+
+  // ==================== ONE-HIT MAIN GATE HAMMER SEQUENCE ====================
+  const executeGateStrike = useCallback((ctx: HorrorSceneContext) => {
+    if (gateHitBusyRef.current) return;
+    if (ritualState.gateOpening || ritualState.gateFullyOpen) return;
+
+    // EXACT ONE HAMMER HIT SEQUENCE:
+    // 1. Hand swings the heavy iron hammer
+    gateHitBusyRef.current = true;
+    ctx.player.hasHammer = true;
+    ctx.player.triggerHandGesture('HAMMER_SWING', 0.85);
+
+    // 2. Strong metallic impact & gate reaction
+    setTimeout(() => {
+      horrorAudio.playHammerHit3();
+      horrorAudio.playMetallicChainClink(1.0);
+      ctx.environment.strikeGate(1); // Small realistic gate shake
+
+      // 3. Chain & padlock release and drop naturally to ground
+      setTimeout(() => {
+        ctx.environment.dropChains();
+        horrorAudio.playGateUnlockAndOpen();
+
+        // 4. Gate begins opening smoothly
+        setTimeout(() => {
+          horrorAudio.playGateCreak(1.0);
+          setRitualState((prev) => ({
+            ...prev,
+            gateHits: 1,
+            gateUnlocked: true,
+            gateOpening: true,
+            gatePhase: 'OPENING',
+          }));
+          gateHitBusyRef.current = false;
+        }, 320);
+      }, 160);
+    }, 280);
+  }, [ritualState.gateOpening, ritualState.gateFullyOpen]);
 
   // ==================== INTERACTION LOGIC ====================
   const handlePrimaryInteraction = useCallback(() => {
@@ -704,16 +843,13 @@ export default function Game() {
       return;
     }
 
+    const gDist = ctx.player.position.distanceTo(ctx.environment.gatePosition);
+
     if (!activePrompt) {
-      // Fallback gate inspect
-      const gDist = ctx.player.position.distanceTo(ctx.environment.gatePosition);
-      if (gDist <= 4.2) {
-        setIsInspectingGate(true);
-        ctx.player.setInspecting(true);
-        setTimeout(() => {
-          setIsInspectingGate(false);
-          ctx.player.setInspecting(false);
-        }, 2200);
+      // Natural interaction when standing in front of the gate
+      if (gDist <= 4.8 && !ritualState.gateFullyOpen && !ritualState.gateOpening) {
+        // Trigger gate rod hit sequence
+        executeGateStrike(ctx);
       }
       return;
     }
@@ -723,16 +859,32 @@ export default function Game() {
         // Check if inside bungalow for interior clue
         const pPos = ctx.player.position;
         if (pPos.z <= -58.5) {
-          const found = ctx.bungalowInterior.interiorClues.find((c) => pPos.distanceTo(c.position) <= 3.0);
+          const found = ctx.bungalowInterior.interiorClues.find((c) => pPos.distanceTo(c.position) <= 3.2);
           if (found) {
             setInspectedClue(found);
             ctx.player.setReadingNote(true);
             horrorAudio.playPaperRustle();
             exploredCluesRef.current.add(found.id);
 
-            // Check if all ground floor clues were explored
-            const allGroundExplored = GROUND_FLOOR_CLUE_IDS.every((id) => exploredCluesRef.current.has(id));
-            if (allGroundExplored && ritualState.currentObjective !== 'SEARCH THE SECOND FLOOR') {
+            // Special horror triggers for specific clues
+            if (found.id === 'CLUE_STORAGE_MIRROR') {
+              ctx.bungalowInterior.triggerMirrorSilhouette();
+            } else if (found.id === 'CLUE_UPPER_MUSIC_BOX') {
+              horrorAudio.playMusicBox();
+            } else if (found.id === 'CLUE_DINING_CLOCK') {
+              ctx.bungalowInterior.isClockStopped = true;
+              horrorAudio.stopGrandfatherClock();
+            } else if (found.id === 'CLUE_UPPER_PORCELAIN_DOLL') {
+              horrorAudio.playSubtleWhisper('BEHIND');
+            }
+
+            // Check if required ground floor clues were explored
+            const groundExploredCount = GROUND_FLOOR_CLUE_IDS.filter((id) => exploredCluesRef.current.has(id)).length;
+            if (
+              groundExploredCount >= 3 &&
+              ritualState.currentObjective !== 'SEARCH THE SECOND FLOOR' &&
+              ritualState.currentObjective !== 'FIND OUT WHAT HAPPENED TO YAMINI'
+            ) {
               setRitualState((prev) => ({ ...prev, currentObjective: 'SEARCH THE SECOND FLOOR' }));
               setObjectiveBanner({ title: 'OBJECTIVE UPDATED', subtitle: 'SEARCH THE SECOND FLOOR' });
               setTimeout(() => setObjectiveBanner(null), 5000);
@@ -754,9 +906,25 @@ export default function Game() {
           const next = { ...prev, lamp1Lit: true };
           if (next.lamp2Lit && !next.lamp3Revealed) {
             setTimeout(() => {
-              ctx.environment.revealLamp3();
-              setRitualState((p) => ({ ...p, lamp3Revealed: true }));
-            }, 2200);
+              ctx.environment.spawnLamp3();
+              horrorAudio.playLampSpawn();
+              setRitualState((p) => ({
+                ...p,
+                lamp3Revealed: true,
+                currentObjective: 'ACTIVATE THE THIRD LAMP BESIDE THE MAIN GATE',
+              }));
+              setObjectiveBanner({
+                title: 'A THIRD LAMP HAS APPEARED',
+                subtitle: 'LOCATED BESIDE THE MAIN BUNGALOW GATE',
+              });
+              setTimeout(() => setObjectiveBanner(null), 5000);
+            }, 1000);
+          } else if (!next.lamp2Lit) {
+            setObjectiveBanner({
+              title: 'FIRST LAMP LIT (1/3)',
+              subtitle: 'FIND THE SECOND LAMP AT THE DEAD TREE AREA',
+            });
+            setTimeout(() => setObjectiveBanner(null), 4000);
           }
           return next;
         });
@@ -772,9 +940,25 @@ export default function Game() {
           const next = { ...prev, lamp2Lit: true };
           if (next.lamp1Lit && !next.lamp3Revealed) {
             setTimeout(() => {
-              ctx.environment.revealLamp3();
-              setRitualState((p) => ({ ...p, lamp3Revealed: true }));
-            }, 2200);
+              ctx.environment.spawnLamp3();
+              horrorAudio.playLampSpawn();
+              setRitualState((p) => ({
+                ...p,
+                lamp3Revealed: true,
+                currentObjective: 'ACTIVATE THE THIRD LAMP BESIDE THE MAIN GATE',
+              }));
+              setObjectiveBanner({
+                title: 'A THIRD LAMP HAS APPEARED',
+                subtitle: 'LOCATED BESIDE THE MAIN BUNGALOW GATE',
+              });
+              setTimeout(() => setObjectiveBanner(null), 5000);
+            }, 1000);
+          } else if (!next.lamp1Lit) {
+            setObjectiveBanner({
+              title: 'SECOND LAMP LIT (1/3)',
+              subtitle: 'FIND THE OTHER LAMP AT THE BROKEN GARDEN SHRINE',
+            });
+            setTimeout(() => setObjectiveBanner(null), 4000);
           }
           return next;
         });
@@ -786,38 +970,29 @@ export default function Game() {
         horrorAudio.playLampIgnition();
         ctx.environment.lightLamp('LAMP_3');
         setRitualState((prev) => ({ ...prev, lamp3Lit: true }));
-        horrorAudio.setPsychologicalSilence(true, 2.2);
+        horrorAudio.setPsychologicalSilence(true, 1.4);
         setTimeout(() => {
           horrorAudio.playRitualGateReaction();
-          ctx.environment.revealIronKey();
-          setRitualState((prev) => ({ ...prev, keyRevealed: true }));
+          horrorAudio.playHammerPickup();
+          ctx.player.hasHammer = true;
+          ctx.player.triggerHandGesture('PICKUP_HAMMER', 1.4);
+          setRitualState((prev) => ({
+            ...prev,
+            hasHammer: true,
+            hammerFound: true,
+            hammerCollected: true,
+            currentObjective: 'PROCEED TO THE MAIN GATE & BREAK THE CHAINS WITH THE HAMMER',
+          }));
+          setObjectiveBanner({
+            title: 'HAMMER OBTAINED',
+            subtitle: 'TAKE THE HAMMER TO THE MAIN GATE',
+          });
+          setTimeout(() => setObjectiveBanner(null), 5000);
           horrorAudio.setPsychologicalSilence(false);
-        }, 2000);
+        }, 1400);
         break;
       }
-      case 'GATE_KEY': {
-        ctx.player.triggerHandGesture('PICKUP_KEY', 1.6);
-        ctx.environment.collectIronKey();
-        horrorAudio.playKeyPickup();
-        setRitualState((prev) => ({ ...prev, keyCollected: true }));
-        break;
-      }
-      case 'GATE_CHAIN': {
-        if (ritualState.keyCollected && !ritualState.gateUnlocked) {
-          ctx.player.triggerHandGesture('UNLOCK_GATE', 2.0);
-          ctx.environment.dropChains();
-          horrorAudio.playGateUnlockAndOpen();
-          setRitualState((prev) => ({ ...prev, gateUnlocked: true, gateOpening: true }));
-        } else {
-          setIsInspectingGate(true);
-          ctx.player.setInspecting(true);
-          setTimeout(() => {
-            setIsInspectingGate(false);
-            ctx.player.setInspecting(false);
-          }, 2200);
-        }
-        break;
-      }
+      case 'GATE_KEY':
       case 'HAMMER_PICKUP': {
         ctx.player.triggerHandGesture('PICKUP_HAMMER', 1.4);
         ctx.player.hasHammer = true;
@@ -827,7 +1002,37 @@ export default function Game() {
           ...prev,
           hammerFound: true,
           hasHammer: true,
-          currentObjective: 'BREAK DOWN THE BUNGALOW ENTRANCE DOOR',
+          hammerCollected: true,
+          currentObjective: 'PROCEED TO THE MAIN GATE & BREAK THE CHAINS WITH THE HAMMER',
+        }));
+        setObjectiveBanner({
+          title: 'HAMMER OBTAINED',
+          subtitle: 'TAKE THE HAMMER TO THE MAIN GATE',
+        });
+        setTimeout(() => setObjectiveBanner(null), 5000);
+        break;
+      }
+      case 'GATE_CHAIN': {
+        if (!ritualState.hasHammer) {
+          horrorAudio.playGateChainRattle(0.7);
+          const lampsCount = (ritualState.lamp1Lit ? 1 : 0) + (ritualState.lamp2Lit ? 1 : 0) + (ritualState.lamp3Lit ? 1 : 0);
+          setObjectiveBanner({
+            title: 'GATE IS CHAINED SHUT',
+            subtitle: `LOCKED WITH A HEAVY PADLOCK (${lampsCount}/3 LAMPS LIT). COMPLETE THE 3-LAMP PUZZLE TO OBTAIN A TOOL.`,
+          });
+          setTimeout(() => setObjectiveBanner(null), 4000);
+          return;
+        }
+        executeGateStrike(ctx);
+        break;
+      }
+      case 'BUNGALOW_DOOR_ENTER': {
+        ctx.player.triggerHandGesture('UNLOCK_GATE', 1.8);
+        horrorAudio.playBungalowDoorOpen();
+        setRitualState((prev) => ({
+          ...prev,
+          bungalowDoorOpening: true,
+          bungalowDoorOpen: true,
         }));
         break;
       }
@@ -915,7 +1120,7 @@ export default function Game() {
       <div
         id="horror-canvas-container"
         ref={containerRef}
-        className="absolute inset-0 w-full h-full cursor-crosshair z-0 touch-none select-none"
+        className="absolute inset-0 w-full h-full cursor-default z-0 touch-none select-none"
       />
 
       {/* Cinematic Fog, Grain, Vignette & Lightning Overlay */}

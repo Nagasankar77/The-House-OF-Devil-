@@ -58,6 +58,7 @@ export type InteractionType =
   | 'BUNGALOW_DOOR_INSPECT'
   | 'HAMMER_PICKUP'
   | 'BUNGALOW_DOOR_HIT'
+  | 'BUNGALOW_DOOR_ENTER'
   | null;
 
 export interface StoryPoster {
@@ -83,15 +84,29 @@ export interface InteractionPrompt {
   posterId?: string;
 }
 
+export type GatePhase =
+  | 'GATE_CLOSED'
+  | 'HIT_1'
+  | 'HIT_2'
+  | 'HIT_3'
+  | 'GHOST_EVENT'
+  | 'UNLOCKING'
+  | 'OPENING'
+  | 'GATE_OPEN';
+
 export interface RitualState {
+  gatePhase?: GatePhase;
+  gateHits?: number;
   noteRead: boolean;
   lamp1Lit: boolean;
   lamp2Lit: boolean;
   lamp3Revealed: boolean;
   lamp3Lit: boolean;
   ritualComplete?: boolean;
-  keyRevealed: boolean;
-  keyCollected: boolean;
+  hammerRevealed?: boolean;
+  hammerCollected?: boolean;
+  keyRevealed?: boolean;
+  keyCollected?: boolean;
   hasKey?: boolean;
   gateUnlocked: boolean;
   gateOpening: boolean;
@@ -106,6 +121,7 @@ export interface RitualState {
   hammerFound?: boolean;
   hasHammer?: boolean;
   bungalowDoorHits?: number;
+  bungalowDoorOpening?: boolean;
   bungalowDoorOpen?: boolean;
   currentObjective?: string;
 }

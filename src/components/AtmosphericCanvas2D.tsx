@@ -434,7 +434,7 @@ export const AtmosphericCanvas2D: React.FC<AtmosphericCanvas2DProps> = ({
       <canvas
         ref={canvasRef}
         id="atmospheric-2d-canvas"
-        className="w-full h-full block cursor-crosshair"
+        className="w-full h-full block cursor-default"
       />
     </div>
   );

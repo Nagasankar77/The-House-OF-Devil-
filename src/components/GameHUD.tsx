@@ -164,7 +164,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               />
               {/* Lamp 3 */}
               <span
-                title="Hidden Stone Alcove Lamp"
+                title="Main Gate Lamp"
                 className={`inline-block w-2.5 h-2.5 rounded-full border transition-all ${
                   ritualState?.lamp3Lit
                     ? 'bg-amber-500 border-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.8)]'
@@ -178,10 +178,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               {litCount}/3
             </span>
 
-            {/* Key Status */}
-            {ritualState?.keyCollected && !ritualState?.gateUnlocked && (
+            {/* Hammer Status */}
+            {ritualState?.hasHammer && !ritualState?.gateUnlocked && (
               <span className="text-[10px] text-amber-300 font-bold border-l border-stone-800 pl-2 animate-pulse">
-                [KEY READY]
+                [HAMMER READY]
               </span>
             )}
 
@@ -242,11 +242,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             ● [ESC] MENU
           </button>
         </div>
-      </div>
-
-      {/* Center Subtle Reticle */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-1.5 h-1.5 rounded-full bg-stone-400/35" />
       </div>
 
       {/* Primary Interaction Prompt (Contextual: Note, Lamp 1, Lamp 2, Lamp 3, Key, Gate) */}

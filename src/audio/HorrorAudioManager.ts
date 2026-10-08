@@ -2352,6 +2352,144 @@ export class HorrorAudioManager {
     osc.stop(now + 0.02);
   }
 
+  public playMusicBox(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const notes = [
+      { f: 587.33, t: 0 },
+      { f: 698.46, t: 0.5 },
+      { f: 880.00, t: 1.0 },
+      { f: 1174.66, t: 1.5 },
+      { f: 1046.50, t: 2.2 },
+      { f: 932.33, t: 2.8 },
+      { f: 880.00, t: 3.5 },
+      { f: 783.99, t: 4.2 }
+    ];
+
+    notes.forEach((note) => {
+      setTimeout(() => {
+        if (!this.ctx || !this.sfxBus) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const harm = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(note.f, now);
+        harm.type = 'triangle';
+        harm.frequency.setValueAtTime(note.f * 3, now);
+
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+
+        osc.connect(gain);
+        harm.connect(gain);
+        gain.connect(this.sfxBus);
+
+        osc.start(now);
+        harm.start(now);
+        osc.stop(now + 1.3);
+        harm.stop(now + 1.3);
+      }, note.t * 1000);
+    });
+  }
+
+  public playChairSlide(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.linearRampToValueAtTime(130, now + 0.8);
+
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
+
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.9);
+  }
+
+  public playMirrorSilhouetteStinger(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const osc1 = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc1.type = 'sawtooth';
+    osc2.type = 'triangle';
+    osc1.frequency.setValueAtTime(300, now);
+    osc2.frequency.setValueAtTime(424, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.3, now + 0.3);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.8);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 1.9);
+    osc2.stop(now + 1.9);
+  }
+
+  public stopGrandfatherClock(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(35, now + 0.6);
+
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.75);
+  }
+
+  public playUpstairsFootsteps(): void {
+    if (!this.ctx) return;
+    const steps = [0, 420, 840, 1260];
+    steps.forEach((delayMs, idx) => {
+      setTimeout(() => {
+        if (!this.ctx || !this.sfxBus) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(80 + (idx % 2) * 15, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + 0.18);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(150, now);
+
+        gain.gain.setValueAtTime(0.32, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.sfxBus);
+
+        osc.start(now);
+        osc.stop(now + 0.25);
+        this.playWallCreak(0.5);
+      }, delayMs);
+    });
+  }
+
   public playCinematicTransition(): void {
     if (!this.ctx || !this.uiBus) return;
     const now = this.ctx.currentTime;
@@ -2504,6 +2642,37 @@ export class HorrorAudioManager {
 
     osc.start(now);
     osc.stop(now + 0.75);
+  }
+
+  /**
+   * LAMP SPAWN: Subtle horror-style spawn audio cue when the 3rd lamp materializes beside the main gate.
+   * Soft metallic ring, subtle resonant chime, and delicate padlock vibration.
+   */
+  public playLampSpawn(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // Resonant high-register glass/bell harmonic
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(659.25, now); // E5
+    osc.frequency.exponentialRampToValueAtTime(329.63, now + 1.2); // E4
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.045, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 1.5);
+
+    // Subtle metallic clink
+    setTimeout(() => {
+      this.playSubtlePadlockClink();
+    }, 150);
   }
 
   /**
@@ -3227,6 +3396,85 @@ export class HorrorAudioManager {
     mGain.connect(this.sfxBus);
     mOsc.start(now);
     mOsc.stop(now + 0.25);
+  }
+
+  /**
+   * Sudden rapid fluttering wings and eerie high-pitched echolocation chirps/screeches
+   * as a swarm of bats flies out from the bungalow entrance.
+   */
+  public playBatSwarmFlock(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Rapid Wing Fluttering: Bandpass-filtered noise with 14 Hz amplitude modulation
+    const bufferSize = Math.floor(this.ctx.sampleRate * 2.2);
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = Math.random() * 2 - 1;
+    }
+
+    const whiteNoise = this.ctx.createBufferSource();
+    whiteNoise.buffer = noiseBuffer;
+
+    const noiseFilter = this.ctx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.setValueAtTime(320, now);
+    noiseFilter.Q.setValueAtTime(1.8, now);
+
+    // AM modulation for flapping rhythm (~14 flaps per second)
+    const flutterLfo = this.ctx.createOscillator();
+    flutterLfo.frequency.setValueAtTime(14.5, now);
+    flutterLfo.frequency.linearRampToValueAtTime(18.0, now + 1.2);
+
+    const flutterDepth = this.ctx.createGain();
+    flutterDepth.gain.setValueAtTime(0.55, now);
+
+    const flutterGain = this.ctx.createGain();
+    flutterGain.gain.setValueAtTime(0.0001, now);
+    flutterGain.gain.linearRampToValueAtTime(0.38, now + 0.12);
+    flutterGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.1);
+
+    flutterLfo.connect(flutterDepth);
+    flutterDepth.connect(flutterGain.gain);
+
+    whiteNoise.connect(noiseFilter);
+    noiseFilter.connect(flutterGain);
+    flutterGain.connect(this.sfxBus);
+
+    whiteNoise.start(now);
+    flutterLfo.start(now);
+    whiteNoise.stop(now + 2.2);
+    flutterLfo.stop(now + 2.2);
+
+    // 2. High-Pitched Bat Echolocation Screeches & Chirps (5 overlapping rapid chirp bursts)
+    const chirpDelays = [0.05, 0.22, 0.48, 0.75, 1.1];
+    chirpDelays.forEach((delay) => {
+      const cNow = now + delay;
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      const filter = this.ctx!.createBiquadFilter();
+
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(2600, cNow);
+      filter.Q.setValueAtTime(3.5, cNow);
+
+      osc.type = 'sine';
+      // Fast downward pitch sweep with vibrato
+      osc.frequency.setValueAtTime(3200 + Math.random() * 800, cNow);
+      osc.frequency.exponentialRampToValueAtTime(1400 + Math.random() * 400, cNow + 0.14);
+
+      gain.gain.setValueAtTime(0.0001, cNow);
+      gain.gain.linearRampToValueAtTime(0.09, cNow + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, cNow + 0.15);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.sfxBus!);
+
+      osc.start(cNow);
+      osc.stop(cNow + 0.16);
+    });
   }
 
   public dispose(): void {

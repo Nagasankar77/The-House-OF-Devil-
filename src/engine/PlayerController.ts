@@ -554,46 +554,64 @@ export class PlayerController {
       const speed = (controls.run ? this.runSpeed : this.moveSpeed) * delta;
       this.tempProposedPos.copy(this.position).addScaledVector(this.tempWorldMove, speed);
 
-      // Collision Detection: Player sphere vs environment colliders
-      const playerRadius = 0.42;
-      let canMoveX = true;
-      let canMoveZ = true;
+      // Collision Detection: Continuous smooth sliding sphere vs environment colliders
+      const playerRadius = 0.38; // Comfortable clearance through 1.8m-2.0m doorways and staircases
+      let resolvedX = this.tempProposedPos.x;
+      let resolvedZ = this.tempProposedPos.z;
+      const testPoint = new THREE.Vector3();
+      const closestPoint = new THREE.Vector3();
 
-      // Test X movement independently
-      this.tempTestPosX.set(this.tempProposedPos.x, 1.0, this.position.z);
-      this.tempSphereX.center.copy(this.tempTestPosX);
-      this.tempSphereX.radius = playerRadius;
+      const playerFeetY = this.position.y;
+      const playerHeadY = this.position.y + 1.80;
+      const playerWaistY = this.position.y + 0.90;
 
-      // Test Z movement independently
-      this.tempTestPosZ.set(this.position.x, 1.0, this.tempProposedPos.z);
-      this.tempSphereZ.center.copy(this.tempTestPosZ);
-      this.tempSphereZ.radius = playerRadius;
+      // Multi-pass iterative resolution for corners, fence, pillars, and gates
+      for (let iter = 0; iter < 3; iter++) {
+        for (const box of colliders) {
+          // Skip inactive/removed colliders placed far away
+          if (box.min.x > 500 || box.min.z > 500 || box.min.y > 500) continue;
 
-      for (const box of colliders) {
-        if (box.intersectsSphere(this.tempSphereX)) {
-          canMoveX = false;
-        }
-        if (box.intersectsSphere(this.tempSphereZ)) {
-          canMoveZ = false;
+          // Step-over tolerance: allow stepping over surfaces below feet + 0.18m (curbs, step lips)
+          // Also skip obstacles completely above head
+          if (box.max.y < playerFeetY + 0.18 || box.min.y > playerHeadY) {
+            continue;
+          }
+
+          testPoint.set(resolvedX, playerWaistY, resolvedZ);
+
+          box.clampPoint(testPoint, closestPoint);
+          const dx = testPoint.x - closestPoint.x;
+          const dz = testPoint.z - closestPoint.z;
+          const distSq = dx * dx + dz * dz;
+
+          if (distSq < playerRadius * playerRadius) {
+            const dist = Math.sqrt(distSq);
+            if (dist > 0.0001) {
+              const overlap = playerRadius - dist;
+              resolvedX += (dx / dist) * overlap;
+              resolvedZ += (dz / dist) * overlap;
+            } else {
+              // Center inside box: push out along nearest horizontal boundary
+              const toMinX = Math.abs(testPoint.x - box.min.x);
+              const toMaxX = Math.abs(testPoint.x - box.max.x);
+              const toMinZ = Math.abs(testPoint.z - box.min.z);
+              const toMaxZ = Math.abs(testPoint.z - box.max.z);
+              const minPen = Math.min(toMinX, toMaxX, toMinZ, toMaxZ);
+              if (minPen === toMinX) resolvedX = box.min.x - playerRadius;
+              else if (minPen === toMaxX) resolvedX = box.max.x + playerRadius;
+              else if (minPen === toMinZ) resolvedZ = box.min.z - playerRadius;
+              else resolvedZ = box.max.z + playerRadius;
+            }
+          }
         }
       }
 
-      if (canMoveX) this.position.x = this.tempProposedPos.x;
-      if (canMoveZ) this.position.z = this.tempProposedPos.z;
+      this.position.x = resolvedX;
+      this.position.z = resolvedZ;
 
-      // Realistic elevation adjustment: ascending bungalow stairs onto the raised veranda
-      // Bungalow entrance stairs: z from -51.5 to -55.5; veranda floor: z <= -55.5 at y = 1.45
-      let targetElevation = 0;
-      if (this.position.z <= -51.5 && Math.abs(this.position.x) <= 4.2) {
-        if (this.position.z <= -55.5) {
-          targetElevation = 1.45;
-        } else {
-          // Smooth climb on the 5 stone stairs
-          const stairProgress = (-51.5 - this.position.z) / 4.0;
-          targetElevation = stairProgress * 1.45;
-        }
-      }
-      this.position.y = THREE.MathUtils.lerp(this.position.y, targetElevation, Math.min(1, delta * 10.0));
+      // Smooth ground elevation adjustment
+      const targetElevation = this.calculateGroundElevation();
+      this.position.y = THREE.MathUtils.lerp(this.position.y, targetElevation, Math.min(1, delta * 14.0));
 
       // Advance walk cycle
       const cycleRate = controls.run ? 14.5 : 9.8;
@@ -607,6 +625,9 @@ export class PlayerController {
       this.lastFootstepPhase = phase;
     } else {
       this.idleTimer += delta;
+      // Continue settling elevation when stationary so player rests solidly on stairs/floor
+      const targetElevation = this.calculateGroundElevation();
+      this.position.y = THREE.MathUtils.lerp(this.position.y, targetElevation, Math.min(1, delta * 14.0));
     }
 
     // Keep hidden character mesh synchronized
@@ -620,6 +641,57 @@ export class PlayerController {
       distanceToGate: distToGate,
       isMoving: this.isMoving,
     };
+  }
+
+  /**
+   * Computes the exact ground surface elevation (Y) beneath the player's feet.
+   * Seamlessly handles:
+   * 1. Outside approach & road (z > -51.5): ground Y = 0.0
+   * 2. Veranda stone steps (z in [-55.5, -51.5], |x| <= 4.2): smooth 5-step climb from 0.0 to 1.45
+   * 3. Veranda & Ground Floor interior (z <= -55.5, lower floor level): floor Y = 1.45
+   * 4. Grand Staircase (z in [-75.5, -68.5], |x| <= 1.35): smooth 20-step climb from 1.45 to 5.45
+   * 5. Second Floor landing, gallery & master rooms (upper floor level, floor Y = 5.45)
+   */
+  public calculateGroundElevation(): number {
+    const px = this.position.x;
+    const pz = this.position.z;
+    const py = this.position.y;
+
+    // 1. Outside road and courtyard garden path
+    if (pz > -51.5) {
+      return 0.0;
+    }
+
+    // 2. Veranda entrance stairs (rising from y=0 to y=1.45 onto the veranda)
+    if (pz > -55.5) {
+      if (Math.abs(px) <= 4.2) {
+        const stairProgress = Math.max(0, Math.min(1, (-51.5 - pz) / 4.0));
+        return stairProgress * 1.45;
+      }
+      return 0.0;
+    }
+
+    // 3. Inside the bungalow or on the veranda (pz <= -55.5)
+    // Check if player is on the Grand Staircase (z in [-75.5, -68.5], |x| <= 1.35)
+    if (pz <= -68.5 && pz >= -75.5 && Math.abs(px) <= 1.35) {
+      // Linear elevation profile matching the 20 wooden steps
+      const stairT = (-68.5 - pz) / 7.0; // 0 at bottom (-68.5), 1 at top (-75.5)
+      return 1.45 + stairT * 4.0;
+    }
+
+    // 4. Second floor: top landing (z < -75.5 inside central hall), or upper level rooms/galleries
+    if (py > 3.45 && pz <= -58.5) {
+      // Player is currently on the second floor level
+      return 5.45;
+    }
+
+    // If player walked past the top of the stairs onto the second floor top platform
+    if (pz < -75.5 && Math.abs(px) <= 3.2 && py >= 3.0) {
+      return 5.45;
+    }
+
+    // 5. Default ground floor level (all ground floor rooms, hallway, veranda)
+    return 1.45;
   }
 
   /**
@@ -1169,6 +1241,17 @@ export class PlayerController {
       { time: 0.12, intensity: 0.1 },
       { time: 0.05, intensity: 3.6 },
     ];
+  }
+
+  public resetMovement(): void {
+    this.isMoving = false;
+    this.tempWorldMove.set(0, 0, 0);
+    this.tempMoveDir.set(0, 0, 0);
+    this.scareShakeX = 0;
+    this.scareShakeY = 0;
+    this.scareShakeRoll = 0;
+    this.viewmodelSwayX = 0;
+    this.viewmodelSwayY = 0;
   }
 
   public resetPosition(): void {

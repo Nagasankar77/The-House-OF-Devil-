@@ -841,14 +841,25 @@ export class InGameStoryDirector {
       this.callbacks.onSubtitleChange(null);
     }
 
-    // Restore camera position and FOV
-    this.camera.position.copy(this.savedCameraPos);
-    this.camera.rotation.copy(this.savedCameraRot);
-    this.camera.fov = this.savedFov;
+    // Safe placement outside bungalow on road behind main gate (x: 0, y: 0, z: -15.0)
+    this.player.position.set(0, 0, -15.0);
+    this.player.camera.position.set(0, 1.70, -15.0);
+    this.player.cameraYaw = 0;
+    this.player.targetCameraYaw = 0;
+    this.player.cameraPitch = 0;
+    this.player.targetCameraPitch = 0;
+    this.player.scareShakeX = 0;
+    this.player.scareShakeY = 0;
+    this.player.scareShakeRoll = 0;
+    this.camera.fov = this.savedFov || 58;
     this.camera.updateProjectionMatrix();
 
-    // Re-enable player movement controls
+    // Re-enable player movement controls immediately
     this.player.setMenuMode(false);
+    this.player.isInspecting = false;
+    this.player.setCameraInputLocked(false);
+    this.player.isStoryModeActive = false;
+    this.player.resetMovement();
 
     // Stop score and resume atmospheric wind/drone
     horrorAudio.playStoryModeScore('STOP');

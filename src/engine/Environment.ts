@@ -12,8 +12,10 @@ export class HorrorEnvironment {
   public notePosition = new THREE.Vector3(-3.35, 1.65, -20.95);
   public lamp1Position = new THREE.Vector3(-12.5, 0.96, -14.5);
   public lamp2Position = new THREE.Vector3(12.2, 0.42, -14.2);
-  public lamp3Position = new THREE.Vector3(-6.8, 0.88, -19.2);
+  // Lamp 3 is located beside the main bungalow gate (right pillar front threshold)
+  public lamp3Position = new THREE.Vector3(3.4, 1.05, -20.2);
   public keyPosition = new THREE.Vector3(-3.3, 0.68, -20.9);
+  public puzzleHammerPosition = new THREE.Vector3(-5.8, 0.31, -18.8);
 
   public noteMesh: THREE.Mesh | null = null;
   public lamp1Data!: {
@@ -30,17 +32,20 @@ export class HorrorEnvironment {
     light: THREE.PointLight;
     isLit: boolean;
   };
-  public lamp3Data!: {
+  public lamp3Data: {
     group: THREE.Group;
     flame: THREE.Mesh;
     smoke: THREE.Mesh;
     light: THREE.PointLight;
     isLit: boolean;
-    fogVeil: THREE.Mesh;
-    brambles: THREE.Group;
+    pedestalGroup?: THREE.Group;
     isRevealed: boolean;
-    revealProgress: number;
-  };
+  } | null = null;
+  public isLamp3Spawned = false;
+  public lamp3SpawnTimer = -1;
+  public puzzleHammerGroup: THREE.Group | null = null;
+  public puzzleHammerLight: THREE.PointLight | null = null;
+  public isHammerRevealed = false;
   public keyCompartmentDoor: THREE.Mesh | null = null;
   public ironKeyMesh: THREE.Group | null = null;
   public isKeyRevealed = false;
@@ -98,6 +103,11 @@ export class HorrorEnvironment {
   private distantAmbiguousMistShape: THREE.Mesh | null = null;
   private ambiguousMistTimer: number = -1;
 
+  // Gate physical shake response
+  private gateShakeTimer: number = 0;
+  private gateShakeIntensity: number = 0;
+  private gateShakeFrequency: number = 35;
+
   // The Haunted Passage Elements
   public storyPosterMeshes: {
     id: string;
@@ -121,6 +131,7 @@ export class HorrorEnvironment {
   public bungalowDoorMesh: THREE.Group | null = null;
   public bungalowDoorLeftWing: THREE.Mesh | null = null;
   public bungalowDoorRightWing: THREE.Mesh | null = null;
+  public bungalowDoorLockBar: THREE.Mesh | null = null;
   public bungalowDoorOpenProgress: number = 0;
   public isBungalowDoorOpening: boolean = false;
   public bungalowDoorCollider: THREE.Box3 | null = null;
@@ -128,6 +139,7 @@ export class HorrorEnvironment {
   public isHammerCollected: boolean = false;
   public bungalowDoorDamageLevel: number = 0;
   public woodSplinterParticles: THREE.Points | null = null;
+  public doorSplinters: THREE.Mesh[] = [];
 
   // Textures and procedural maps
   private textures: { [key: string]: THREE.Texture } = {};
@@ -425,14 +437,21 @@ export class HorrorEnvironment {
     this.scene.add(this.gateRimLight.target);
     this.scene.add(this.gateRimLight);
 
-    // 5. Soft fill light at the gate: ensures rusty iron, carved stone, and the "THE HOUSE OF DEVIL" sign are clearly readable
-    this.gateFillLight = new THREE.PointLight(0x526b8d, 0.95, 26, 2.0);
-    this.gateFillLight.position.set(0, 3.2, -17.5);
+    // 5. Soft fill light at the gate: ensures rusty iron, carved stone, and the entrance threshold are clearly readable
+    this.gateFillLight = new THREE.PointLight(0x6e88a8, 1.25, 28, 1.8);
+    this.gateFillLight.position.set(0, 3.4, -17.5);
     this.scene.add(this.gateFillLight);
 
+    // 5b. Driveway passage moonlight fill: illuminates path directly behind the gate for crystal-clear entrance reveal
+    const passageMoonLight = new THREE.DirectionalLight(0x567292, 0.85);
+    passageMoonLight.position.set(-8, 20, -32);
+    passageMoonLight.target.position.set(0, 0, -28);
+    this.scene.add(passageMoonLight.target);
+    this.scene.add(passageMoonLight);
+
     // 6. Flickering broken carriage lantern on the right pillar
-    this.pillarLanternLight = new THREE.PointLight(0xff9944, 0.85, 14, 2.0);
-    this.pillarLanternLight.position.set(3.8, 6.0, -21.0);
+    this.pillarLanternLight = new THREE.PointLight(0xffa055, 1.1, 16, 2.0);
+    this.pillarLanternLight.position.set(3.8, 5.8, -21.0);
     this.scene.add(this.pillarLanternLight);
 
     // 7. Sudden lightning flash source
@@ -480,8 +499,8 @@ export class HorrorEnvironment {
     groundMesh.receiveShadow = true;
     this.scene.add(groundMesh);
 
-    // Muddy path with wet puddle sheen and specular reflection
-    const pathGeo = new THREE.PlaneGeometry(7.5, 90);
+    // Muddy path with wet puddle sheen and specular reflection (outside gate: z in [-22.0, 35.0])
+    const pathGeo = new THREE.PlaneGeometry(7.5, 57.0);
     const pathMat = new THREE.MeshStandardMaterial({
       map: this.textures.path,
       color: 0x383e38,
@@ -490,7 +509,7 @@ export class HorrorEnvironment {
     });
     const pathMesh = new THREE.Mesh(pathGeo, pathMat);
     pathMesh.rotation.x = -Math.PI / 2;
-    pathMesh.position.set(0, 0.02, -10);
+    pathMesh.position.set(0, 0.02, 6.5);
     pathMesh.receiveShadow = true;
     this.scene.add(pathMesh);
 
@@ -803,24 +822,41 @@ export class HorrorEnvironment {
     this.scene.add(this.gateGroup);
 
     // 6. Precise Physical Colliders so Player Cannot Walk Through Gate or Fence
+    // Closed gate thin blocking barrier: width 5.8m, depth 0.3m
     this.gateCollider = new THREE.Box3();
     this.gateCollider.setFromCenterAndSize(
       new THREE.Vector3(0, 3.5, this.gatePosition.z),
-      new THREE.Vector3(7.6, 7.0, 2.0)
+      new THREE.Vector3(5.8, 7.0, 0.3)
     );
     this.colliders.push(this.gateCollider);
 
+    // Stone Gate Pillars Colliders (x = -3.8 and x = 3.8)
+    const leftPillarCollider = new THREE.Box3();
+    leftPillarCollider.setFromCenterAndSize(
+      new THREE.Vector3(-3.8, 3.5, this.gatePosition.z),
+      new THREE.Vector3(1.8, 7.0, 1.8)
+    );
+    this.colliders.push(leftPillarCollider);
+
+    const rightPillarCollider = new THREE.Box3();
+    rightPillarCollider.setFromCenterAndSize(
+      new THREE.Vector3(3.8, 3.5, this.gatePosition.z),
+      new THREE.Vector3(1.8, 7.0, 1.8)
+    );
+    this.colliders.push(rightPillarCollider);
+
+    // Perimeter Iron Railing Fence Colliders
     const leftFenceCollider = new THREE.Box3();
     leftFenceCollider.setFromCenterAndSize(
       new THREE.Vector3(-24, 3.0, this.gatePosition.z),
-      new THREE.Vector3(40, 6.0, 2.0)
+      new THREE.Vector3(38.6, 6.0, 0.4)
     );
     this.colliders.push(leftFenceCollider);
 
     const rightFenceCollider = new THREE.Box3();
     rightFenceCollider.setFromCenterAndSize(
       new THREE.Vector3(24, 3.0, this.gatePosition.z),
-      new THREE.Vector3(40, 6.0, 2.0)
+      new THREE.Vector3(38.6, 6.0, 0.4)
     );
     this.colliders.push(rightFenceCollider);
 
@@ -1319,65 +1355,84 @@ export class HorrorEnvironment {
       metalness: 0.82,
     });
 
-    // 2. Main Corridor Walls (Length: 23m, from z = -23.0 to z = -46.0)
-    // Left Wall: inner face at x = -1.45, center at x = -1.65, thickness 0.4
-    const leftWallGeo = new THREE.BoxGeometry(0.4, 4.0, 23.0);
+    // 2. Continuous Enclosed Pathway Walls from MAIN GATE (z = -22.0) to BUNGALOW APPROACH (z = -51.8)
+    // Continuous left and right walls terminate cleanly at z = -51.8 before the front staircase
+    // Total Span: 29.8m, Center Z: -36.9, Height: 4.5m, Thickness: 0.5m.
+    // Walkable corridor width: 2.9m (inner faces at x = -1.45 and x = +1.45).
+
+    // --- CONTINUOUS LEFT WALL ---
+    const leftWallGeo = new THREE.BoxGeometry(0.5, 4.5, 29.8);
     const leftWall = new THREE.Mesh(leftWallGeo, leftWallMat);
-    leftWall.position.set(-1.65, 2.0, -34.5);
+    leftWall.position.set(-1.70, 2.25, -36.9);
     leftWall.castShadow = true;
     leftWall.receiveShadow = true;
     passageGroup.add(leftWall);
 
-    // Left wall top coping
-    const leftCopingGeo = new THREE.BoxGeometry(0.52, 0.2, 23.0);
-    const leftCoping = new THREE.Mesh(leftCopingGeo, stoneCopingMat);
-    leftCoping.position.set(-1.65, 4.1, -34.5);
+    // Left wall continuous stone coping
+    const copingGeo = new THREE.BoxGeometry(0.65, 0.25, 29.8);
+    const leftCoping = new THREE.Mesh(copingGeo, stoneCopingMat);
+    leftCoping.position.set(-1.70, 4.625, -36.9);
     leftCoping.castShadow = true;
+    leftCoping.receiveShadow = true;
     passageGroup.add(leftCoping);
 
-    // Right Wall: inner face at x = 1.45, center at x = 1.65, thickness 0.4
-    const rightWallGeo = new THREE.BoxGeometry(0.4, 4.0, 23.0);
+    // Left gate pillar transition buttress (overlap with left gate pillar at x = -3.8, z = -22.0)
+    const lGateTransition = new THREE.Mesh(new THREE.BoxGeometry(1.6, 4.8, 1.4), leftWallMat);
+    lGateTransition.position.set(-2.5, 2.4, -22.4);
+    lGateTransition.castShadow = true;
+    lGateTransition.receiveShadow = true;
+    passageGroup.add(lGateTransition);
+
+    // Left lateral perimeter wall (connects at z = -51.8 from outer face of corridor wall out to x = -19.5, sealing estate)
+    const lPerimeterWall = new THREE.Mesh(new THREE.BoxGeometry(17.5, 4.5, 0.6), leftWallMat);
+    lPerimeterWall.position.set(-10.70, 2.25, -51.8);
+    lPerimeterWall.castShadow = true;
+    lPerimeterWall.receiveShadow = true;
+    passageGroup.add(lPerimeterWall);
+
+    // --- CONTINUOUS RIGHT WALL ---
+    const rightWallGeo = new THREE.BoxGeometry(0.5, 4.5, 29.8);
     const rightWall = new THREE.Mesh(rightWallGeo, rightWallMat);
-    rightWall.position.set(1.65, 2.0, -34.5);
+    rightWall.position.set(1.70, 2.25, -36.9);
     rightWall.castShadow = true;
     rightWall.receiveShadow = true;
     passageGroup.add(rightWall);
 
-    // Right wall top coping
-    const rightCoping = new THREE.Mesh(leftCopingGeo, stoneCopingMat);
-    rightCoping.position.set(1.65, 4.1, -34.5);
+    // Right wall continuous stone coping
+    const rightCoping = new THREE.Mesh(copingGeo, stoneCopingMat);
+    rightCoping.position.set(1.70, 4.625, -36.9);
     rightCoping.castShadow = true;
+    rightCoping.receiveShadow = true;
     passageGroup.add(rightCoping);
 
-    // 3. Entrance Funnel Wing Walls (connecting from main gate pillars at x = ±3.5, z = -22.0 to passage walls at x = ±1.65, z = -23.0)
-    // Left entrance wing
-    const leftWingGeo = new THREE.BoxGeometry(0.4, 4.0, 2.2);
-    const leftEntranceWing = new THREE.Mesh(leftWingGeo, leftWallMat);
-    leftEntranceWing.position.set(-2.55, 2.0, -22.4);
-    leftEntranceWing.rotation.y = 0.98;
-    leftEntranceWing.castShadow = true;
-    passageGroup.add(leftEntranceWing);
+    // Right gate pillar transition buttress (overlap with right gate pillar at x = 3.8, z = -22.0)
+    const rGateTransition = new THREE.Mesh(new THREE.BoxGeometry(1.6, 4.8, 1.4), rightWallMat);
+    rGateTransition.position.set(2.5, 2.4, -22.4);
+    rGateTransition.castShadow = true;
+    rGateTransition.receiveShadow = true;
+    passageGroup.add(rGateTransition);
 
-    // Right entrance wing
-    const rightEntranceWing = new THREE.Mesh(leftWingGeo, rightWallMat);
-    rightEntranceWing.position.set(2.55, 2.0, -22.4);
-    rightEntranceWing.rotation.y = -0.98;
-    rightEntranceWing.castShadow = true;
-    passageGroup.add(rightEntranceWing);
+    // Right lateral perimeter wall (connects at z = -51.8 from outer face of corridor wall out to x = +19.5, sealing estate)
+    const rPerimeterWall = new THREE.Mesh(new THREE.BoxGeometry(17.5, 4.5, 0.6), rightWallMat);
+    rPerimeterWall.position.set(10.70, 2.25, -51.8);
+    rPerimeterWall.castShadow = true;
+    rPerimeterWall.receiveShadow = true;
+    passageGroup.add(rPerimeterWall);
 
-    // 4. Courtyard Exit Flared Wing Walls (connecting from passage walls at z = -46.0 to courtyard boundary at z = -49.0, x = ±8.0)
-    const exitWingGeo = new THREE.BoxGeometry(0.4, 4.0, 7.5);
-    const leftExitWing = new THREE.Mesh(exitWingGeo, leftWallMat);
-    leftExitWing.position.set(-4.8, 2.0, -47.8);
-    leftExitWing.rotation.y = -0.96;
-    leftExitWing.castShadow = true;
-    passageGroup.add(leftExitWing);
+    // 3. Architectural Buttress Piers along both walls every ~4.5m
+    const pierGeo = new THREE.BoxGeometry(0.18, 4.6, 0.45);
+    const pierZPositions = [-26.0, -30.5, -35.0, -39.5, -44.0, -48.5];
+    for (const pz of pierZPositions) {
+      const lPier = new THREE.Mesh(pierGeo, stoneCopingMat);
+      lPier.position.set(-1.45, 2.3, pz);
+      lPier.castShadow = true;
+      passageGroup.add(lPier);
 
-    const rightExitWing = new THREE.Mesh(exitWingGeo, rightWallMat);
-    rightExitWing.position.set(4.8, 2.0, -47.8);
-    rightExitWing.rotation.y = 0.96;
-    rightExitWing.castShadow = true;
-    passageGroup.add(rightExitWing);
+      const rPier = new THREE.Mesh(pierGeo, stoneCopingMat);
+      rPier.position.set(1.45, 2.3, pz);
+      rPier.castShadow = true;
+      passageGroup.add(rPier);
+    }
 
     // 5. Exposed Brick & Distressed Detail Patches on Walls
     const brickPatchGeo = new THREE.BoxGeometry(0.04, 1.2, 2.6);
@@ -1456,8 +1511,8 @@ export class HorrorEnvironment {
     });
 
     // 10. Flagstone Pathway with Wet Puddle Reflections
-    // Pathway pavers plane
-    const pathGeo = new THREE.PlaneGeometry(2.86, 23.5);
+    // Pathway pavers plane spanning continuously from Main Gate (-22.0) to Bungalow Approach (-51.8)
+    const pathGeo = new THREE.PlaneGeometry(2.88, 29.8);
     const pathMat = new THREE.MeshStandardMaterial({
       map: this.textures.ground,
       roughness: 0.86,
@@ -1465,7 +1520,7 @@ export class HorrorEnvironment {
     });
     const path = new THREE.Mesh(pathGeo, pathMat);
     path.rotation.x = -Math.PI / 2;
-    path.position.set(0, 0.02, -34.75);
+    path.position.set(0, 0.02, -36.9);
     path.receiveShadow = true;
     passageGroup.add(path);
 
@@ -1564,38 +1619,37 @@ export class HorrorEnvironment {
 
     this.scene.add(passageGroup);
 
-    // 13. Physical Box3 Colliders bounding the player within the Haunted Passage
-    // Left wall solid barrier (inner face at x = -1.45)
+    // 13. Physical Box3 Colliders bounding the player within the Continuous Haunted Passage
+    // Left wall solid barrier (inner face at x = -1.45, continuously from z = -51.8 to z = -21.8)
     const leftCollider = new THREE.Box3();
-    leftCollider.min.set(-2.4, -1.0, -46.5);
-    leftCollider.max.set(-1.45, 6.0, -22.5);
+    leftCollider.min.set(-3.5, -1.0, -51.8);
+    leftCollider.max.set(-1.45, 6.0, -21.8);
     this.colliders.push(leftCollider);
 
-    // Right wall solid barrier (inner face at x = 1.45)
+    // Right wall solid barrier (inner face at x = +1.45, continuously from z = -51.8 to z = -21.8)
     const rightCollider = new THREE.Box3();
-    rightCollider.min.set(1.45, -1.0, -46.5);
-    rightCollider.max.set(2.4, 6.0, -22.5);
+    rightCollider.min.set(1.45, -1.0, -51.8);
+    rightCollider.max.set(3.5, 6.0, -21.8);
     this.colliders.push(rightCollider);
 
-    // Left entrance funnel collider
+    // Left gate junction collider (overlap at left pillar x in [-3.8, -1.45], z in [-23.0, -21.8])
     const lEntCol = new THREE.Box3();
-    lEntCol.setFromCenterAndSize(new THREE.Vector3(-2.6, 2.5, -22.4), new THREE.Vector3(2.4, 6.0, 1.5));
+    lEntCol.setFromCenterAndSize(new THREE.Vector3(-2.8, 2.5, -22.4), new THREE.Vector3(1.8, 6.0, 1.4));
     this.colliders.push(lEntCol);
 
-    // Right entrance funnel collider
+    // Right gate junction collider (overlap at right pillar x in [1.45, 3.8], z in [-23.0, -21.8])
     const rEntCol = new THREE.Box3();
-    rEntCol.setFromCenterAndSize(new THREE.Vector3(2.6, 2.5, -22.4), new THREE.Vector3(2.4, 6.0, 1.5));
+    rEntCol.setFromCenterAndSize(new THREE.Vector3(2.8, 2.5, -22.4), new THREE.Vector3(1.8, 6.0, 1.4));
     this.colliders.push(rEntCol);
 
-    // Left courtyard exit wing collider
-    const lExitCol = new THREE.Box3();
-    lExitCol.setFromCenterAndSize(new THREE.Vector3(-4.8, 2.5, -47.8), new THREE.Vector3(6.5, 6.0, 3.8));
-    this.colliders.push(lExitCol);
+    // Bungalow lateral perimeter boundary colliders at z = -51.8 (leaves clean 3.9m opening for centered staircase)
+    const lCourtCol = new THREE.Box3();
+    lCourtCol.setFromCenterAndSize(new THREE.Vector3(-10.70, 2.5, -51.8), new THREE.Vector3(17.5, 6.0, 0.8));
+    this.colliders.push(lCourtCol);
 
-    // Right courtyard exit wing collider
-    const rExitCol = new THREE.Box3();
-    rExitCol.setFromCenterAndSize(new THREE.Vector3(4.8, 2.5, -47.8), new THREE.Vector3(6.5, 6.0, 3.8));
-    this.colliders.push(rExitCol);
+    const rCourtCol = new THREE.Box3();
+    rCourtCol.setFromCenterAndSize(new THREE.Vector3(10.70, 2.5, -51.8), new THREE.Vector3(17.5, 6.0, 0.8));
+    this.colliders.push(rCourtCol);
   }
 
   private buildMansion(): void {
@@ -1659,33 +1713,72 @@ export class HorrorEnvironment {
     });
 
     // 1. Raised Stone Plinth / Foundation (Classic colonial bungalow requirement)
-    const plinthGeo = new THREE.BoxGeometry(38, 1.4, 26);
-    const plinth = new THREE.Mesh(plinthGeo, plinthMat);
-    plinth.position.set(0, 0.7, 0);
-    plinth.castShadow = true;
-    plinth.receiveShadow = true;
-    bungalowGroup.add(plinth);
+    // Main plinth block supporting the bungalow interior (z in [-13.0, 7.18])
+    const plinthMainGeo = new THREE.BoxGeometry(38, 1.4, 20.18);
+    const plinthMain = new THREE.Mesh(plinthMainGeo, plinthMat);
+    plinthMain.position.set(0, 0.7, -2.91);
+    plinthMain.castShadow = true;
+    plinthMain.receiveShadow = true;
+    bungalowGroup.add(plinthMain);
 
-    // Broad Front Stone Stairs descending to the garden path
-    const stairStepCount = 5;
-    for (let s = 0; s < stairStepCount; s++) {
-      const stepWidth = 8.5;
-      const stepDepth = 0.85;
-      const stepHeight = 1.4 / stairStepCount;
-      const stepGeo = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth * (stairStepCount - s));
-      const step = new THREE.Mesh(stepGeo, plinthMat);
-      step.position.set(0, (s + 0.5) * stepHeight, 13.0 + (s * stepDepth * 0.5));
-      step.castShadow = true;
-      step.receiveShadow = true;
-      bungalowGroup.add(step);
-    }
+    // Veranda plinth wings flanking the central entrance flight (leaving x in [-1.8, 1.8] open for steps & landing)
+    const plinthVerandaGeo = new THREE.BoxGeometry(17.2, 1.4, 5.62);
+    const plinthVerandaL = new THREE.Mesh(plinthVerandaGeo, plinthMat);
+    plinthVerandaL.position.set(-10.4, 0.7, 9.99);
+    plinthVerandaL.castShadow = true;
+    plinthVerandaL.receiveShadow = true;
+    bungalowGroup.add(plinthVerandaL);
 
-    // 2. Large Front Veranda (Verandah) spanning the entire facade
-    const verandaFloorGeo = new THREE.BoxGeometry(36, 0.2, 5.8);
-    const verandaFloor = new THREE.Mesh(verandaFloorGeo, teakMat);
-    verandaFloor.position.set(0, 1.45, 9.8);
-    verandaFloor.receiveShadow = true;
-    bungalowGroup.add(verandaFloor);
+    const plinthVerandaR = new THREE.Mesh(plinthVerandaGeo, plinthMat);
+    plinthVerandaR.position.set(10.4, 0.7, 9.99);
+    plinthVerandaR.castShadow = true;
+    plinthVerandaR.receiveShadow = true;
+    bungalowGroup.add(plinthVerandaR);
+
+    // 2. Large Front Veranda Floor Wings flanking the entrance landing
+    const verandaFloorGeo = new THREE.BoxGeometry(16.7, 0.2, 5.62);
+    const verandaFloorL = new THREE.Mesh(verandaFloorGeo, teakMat);
+    verandaFloorL.position.set(-10.15, 1.45, 9.99);
+    verandaFloorL.receiveShadow = true;
+    bungalowGroup.add(verandaFloorL);
+
+    const verandaFloorR = new THREE.Mesh(verandaFloorGeo, teakMat);
+    verandaFloorR.position.set(10.15, 1.45, 9.99);
+    verandaFloorR.receiveShadow = true;
+    bungalowGroup.add(verandaFloorR);
+
+    // 3. Front Entrance Top Landing: flat, solid stone, perfectly centered with the main door (x = 0)
+    // Connects seamlessly from the top step (z = 10.38) directly to the bungalow entrance door sill (z = 7.18)
+    const landingGeo = new THREE.BoxGeometry(3.4, 1.45, 3.20);
+    const entranceLanding = new THREE.Mesh(landingGeo, plinthMat);
+    entranceLanding.position.set(0, 0.725, 8.78);
+    entranceLanding.receiveShadow = true;
+    bungalowGroup.add(entranceLanding);
+
+    // 4. Properly Aligned Front Stone Steps (5 steps descending from landing down to garden path)
+    // Centerline is strictly x = 0.0, aligned directly with the main bungalow door
+    // All steps have the EXACT SAME WIDTH (3.4m), consistent depth (0.72m), and consistent height (0.29m)
+    const stepsData = [
+      // Step 4 (Top step directly below landing): y = 1.16, z in [10.38, 11.10]
+      { width: 3.40, height: 1.16, depth: 0.72, z: 10.74 },
+      // Step 3: y = 0.87, z in [11.10, 11.82]
+      { width: 3.40, height: 0.87, depth: 0.72, z: 11.46 },
+      // Step 2: y = 0.58, z in [11.82, 12.54]
+      { width: 3.40, height: 0.58, depth: 0.72, z: 12.18 },
+      // Step 1: y = 0.29, z in [12.54, 13.26]
+      { width: 3.40, height: 0.29, depth: 0.72, z: 12.90 },
+      // Step 0 (Bottom step meeting garden path at ground level): y = 0.14, z in [13.26, 13.98]
+      { width: 3.40, height: 0.14, depth: 0.72, z: 13.62 },
+    ];
+
+    stepsData.forEach((st) => {
+      const stepGeo = new THREE.BoxGeometry(st.width, st.height, st.depth);
+      const stepMesh = new THREE.Mesh(stepGeo, plinthMat);
+      stepMesh.position.set(0, st.height / 2, st.z);
+      stepMesh.castShadow = true;
+      stepMesh.receiveShadow = true;
+      bungalowGroup.add(stepMesh);
+    });
 
     // 8 Classical Colonial Pillars / Columns along the veranda
     const colXPositions = [-15, -10.5, -6.5, -2.5, 2.5, 6.5, 10.5, 15];
@@ -1750,6 +1843,13 @@ export class HorrorEnvironment {
     verandaRoof.castShadow = true;
     bungalowGroup.add(verandaRoof);
 
+    // Dark weathered timber ceiling soffit under veranda roof (eliminates orange/brown terracotta ceiling)
+    const verandaCeilingGeo = new THREE.BoxGeometry(37, 0.06, 6.1);
+    const verandaCeiling = new THREE.Mesh(verandaCeilingGeo, teakMat);
+    verandaCeiling.position.set(0, 5.92, 9.8);
+    verandaCeiling.rotation.x = 0.18;
+    bungalowGroup.add(verandaCeiling);
+
     // Weathered timber fascia & brackets under veranda roof
     const fasciaGeo = new THREE.BoxGeometry(37, 0.3, 0.15);
     const fascia = new THREE.Mesh(fasciaGeo, teakMat);
@@ -1769,13 +1869,52 @@ export class HorrorEnvironment {
     lamp2.rotation.z = -0.08;
     bungalowGroup.add(lamp2);
 
-    // 3. Central Bungalow Main Body
-    const mainBodyGeo = new THREE.BoxGeometry(24, 6.2, 16);
-    const mainBody = new THREE.Mesh(mainBodyGeo, plasterMat);
-    mainBody.position.set(0, 4.5, -1.0);
-    mainBody.castShadow = true;
-    mainBody.receiveShadow = true;
-    bungalowGroup.add(mainBody);
+    // 3. Central Bungalow Exterior Perimeter Facade Walls (Hollow Interior - 0 Obstructions to Rooms/Doorway)
+    // Front facade left wing (x in [-12.5, -1.5])
+    const frontLGeo = new THREE.BoxGeometry(11.0, 6.2, 0.25);
+    const frontL = new THREE.Mesh(frontLGeo, plasterMat);
+    frontL.position.set(-7.0, 4.5, 7.18);
+    frontL.castShadow = true;
+    frontL.receiveShadow = true;
+    bungalowGroup.add(frontL);
+
+    // Front facade right wing (x in [1.5, 12.5])
+    const frontRGeo = new THREE.BoxGeometry(11.0, 6.2, 0.25);
+    const frontR = new THREE.Mesh(frontRGeo, plasterMat);
+    frontR.position.set(7.0, 4.5, 7.18);
+    frontR.castShadow = true;
+    frontR.receiveShadow = true;
+    bungalowGroup.add(frontR);
+
+    // Front facade lintel header above the entrance doorway (y in [5.2, 7.6], leaves x in [-1.5, 1.5] open below)
+    const frontLintelGeo = new THREE.BoxGeometry(3.0, 2.4, 0.25);
+    const frontLintel = new THREE.Mesh(frontLintelGeo, plasterMat);
+    frontLintel.position.set(0, 6.4, 7.18);
+    frontLintel.castShadow = true;
+    frontLintel.receiveShadow = true;
+    bungalowGroup.add(frontLintel);
+
+    // Rear exterior perimeter wall (z = -12.72 in bungalowGroup, world z = -78.72)
+    const rearWallGeo = new THREE.BoxGeometry(25.5, 6.2, 0.25);
+    const rearWall = new THREE.Mesh(rearWallGeo, plasterMat);
+    rearWall.position.set(0, 4.5, -12.72);
+    rearWall.castShadow = true;
+    rearWall.receiveShadow = true;
+    bungalowGroup.add(rearWall);
+
+    // Exterior left and right side walls connecting front to back (depth: 20.15m, strictly outside interior rooms)
+    const sideWallGeo = new THREE.BoxGeometry(0.25, 6.2, 20.15);
+    const sideWallL = new THREE.Mesh(sideWallGeo, plasterMat);
+    sideWallL.position.set(-12.65, 4.5, -2.77);
+    sideWallL.castShadow = true;
+    sideWallL.receiveShadow = true;
+    bungalowGroup.add(sideWallL);
+
+    const sideWallR = new THREE.Mesh(sideWallGeo, plasterMat);
+    sideWallR.position.set(12.65, 4.5, -2.77);
+    sideWallR.castShadow = true;
+    sideWallR.receiveShadow = true;
+    bungalowGroup.add(sideWallR);
 
     // Left and Right Projecting Colonial Wings
     const wingGeo = new THREE.BoxGeometry(7, 5.6, 18);
@@ -1788,17 +1927,6 @@ export class HorrorEnvironment {
     rightWing.position.set(15.5, 4.2, 0);
     rightWing.castShadow = true;
     bungalowGroup.add(rightWing);
-
-    // Exposed burnt brick patches showing through peeled plaster
-    const brickPatch1Geo = new THREE.BoxGeometry(3.5, 2.2, 0.1);
-    const brickPatch1 = new THREE.Mesh(brickPatch1Geo, exposedBrickMat);
-    brickPatch1.position.set(-7, 3.2, 7.05);
-    bungalowGroup.add(brickPatch1);
-
-    const brickPatch2Geo = new THREE.BoxGeometry(2.8, 1.8, 0.1);
-    const brickPatch2 = new THREE.Mesh(brickPatch2Geo, exposedBrickMat);
-    brickPatch2.position.set(14.5, 4.5, 9.05);
-    bungalowGroup.add(brickPatch2);
 
     // 4. Large Sloped Indian / Colonial Hip Roof with Terracotta Tiles
     const mainHipRoofGeo = new THREE.ConeGeometry(19, 7.8, 4);
@@ -1827,7 +1955,7 @@ export class HorrorEnvironment {
 
     // 5. Central Double Teak Entrance Doors with Arched Transom Fanlight (Interactive Horror Entrance)
     const doorFrameGroup = new THREE.Group();
-    doorFrameGroup.position.set(0, 3.3, 7.05);
+    doorFrameGroup.position.set(0, 3.3, 7.18);
 
     // Weathered, rotted colonial teak material with grain & cracks
     const weatheredDoorMat = new THREE.MeshStandardMaterial({
@@ -1916,6 +2044,7 @@ export class HorrorEnvironment {
     const lockBar = new THREE.Mesh(lockBarGeo, ironBoltMat);
     lockBar.position.set(0, 0, 0.12);
     doorFrameGroup.add(lockBar);
+    this.bungalowDoorLockBar = lockBar;
 
     doorFrameGroup.add(rightDoorPivot);
     this.bungalowDoorRightWing = rightDoorPivot as any;
@@ -1925,7 +2054,7 @@ export class HorrorEnvironment {
     // Fanlight above door
     const fanlightGeo = new THREE.BoxGeometry(2.8, 1.2, 0.15);
     const fanlight = new THREE.Mesh(fanlightGeo, glassMat);
-    fanlight.position.set(0, 5.8, 7.05);
+    fanlight.position.set(0, 5.8, 7.18);
     bungalowGroup.add(fanlight);
 
     // =========================================================================
@@ -1948,56 +2077,6 @@ export class HorrorEnvironment {
     toolCrate.castShadow = true;
     toolCrate.receiveShadow = true;
     bungalowGroup.add(toolCrate);
-
-    // Physical hammer resting on top of the crate
-    const worldHammer = new THREE.Group();
-    worldHammer.position.set(-2.8, 1.45 + 0.66, 8.8);
-    worldHammer.rotation.set(0.08, 0.45, -0.05);
-
-    // Hammer handle (weathered ash wood)
-    const wHandleMat = new THREE.MeshStandardMaterial({
-      color: 0x4e3626,
-      roughness: 0.86,
-      metalness: 0.08,
-    });
-    const wHandleGeo = new THREE.CylinderGeometry(0.016, 0.019, 0.42, 8);
-    wHandleGeo.rotateZ(Math.PI / 2);
-    const wHandle = new THREE.Mesh(wHandleGeo, wHandleMat);
-    wHandle.castShadow = true;
-    worldHammer.add(wHandle);
-
-    // Hammer head (heavy forged rusted iron with slight glint from moonlight)
-    const wHeadMat = new THREE.MeshStandardMaterial({
-      color: 0x222225,
-      roughness: 0.62,
-      metalness: 0.82,
-    });
-    const wHeadBlock = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.046, 0.042), wHeadMat);
-    wHeadBlock.position.set(0.19, 0, 0);
-    wHeadBlock.castShadow = true;
-    worldHammer.add(wHeadBlock);
-
-    // Striking face
-    const wFaceGeo = new THREE.CylinderGeometry(0.022, 0.020, 0.035, 8);
-    wFaceGeo.rotateZ(Math.PI / 2);
-    const wFace = new THREE.Mesh(wFaceGeo, wHeadMat);
-    wFace.position.set(0.26, 0, 0);
-    worldHammer.add(wFace);
-
-    // Curved rear claw
-    const wClawGeo = new THREE.BoxGeometry(0.05, 0.022, 0.032);
-    wClawGeo.rotateY(0.35);
-    const wClaw = new THREE.Mesh(wClawGeo, wHeadMat);
-    wClaw.position.set(0.12, 0, -0.02);
-    worldHammer.add(wClaw);
-
-    // Subtle glint / soft localized point light highlighting the hammer in darkness
-    const hammerGlint = new THREE.PointLight(0x7896aa, 0.6, 2.2, 2.0);
-    hammerGlint.position.set(0.15, 0.18, 0);
-    worldHammer.add(hammerGlint);
-
-    bungalowGroup.add(worldHammer);
-    this.bungalowHammerMesh = worldHammer;
 
     // 6. Tall Colonial French Windows with Dark Louvered Wooden Shutters
     const winGeo = new THREE.BoxGeometry(1.6, 2.6, 0.1);
@@ -2094,24 +2173,8 @@ export class HorrorEnvironment {
 
     this.scene.add(bungalowGroup);
 
-    // Bungalow Main Body Wall Colliders (Behind the veranda, stopping at z = -58.95)
-    // 1. Left facade wall collider
-    const houseLeftCollider = new THREE.Box3();
-    houseLeftCollider.setFromCenterAndSize(
-      new THREE.Vector3(-11, 8, -66),
-      new THREE.Vector3(18, 20, 16)
-    );
-    this.colliders.push(houseLeftCollider);
-
-    // 2. Right facade wall collider
-    const houseRightCollider = new THREE.Box3();
-    houseRightCollider.setFromCenterAndSize(
-      new THREE.Vector3(11, 8, -66),
-      new THREE.Vector3(18, 20, 16)
-    );
-    this.colliders.push(houseRightCollider);
-
-    // 3. Central entrance door collider (blocks walking through the closed door at z = -58.95)
+    // Bungalow Entrance Door Collider (blocks walking through the closed door at z = -58.95 until opened)
+    // Note: Interior rooms, corridors, and perimeter walls are physically bounded by BungalowInterior colliders
     this.bungalowDoorCollider = new THREE.Box3();
     this.bungalowDoorCollider.setFromCenterAndSize(
       new THREE.Vector3(0, 3.3, -58.95),
@@ -2293,17 +2356,17 @@ export class HorrorEnvironment {
       this.groundFogPlanes.push(plane);
     }
 
-    // 4. Low dense ground fog drifting directly through the gate bars
-    const gateFogGeo = new THREE.PlaneGeometry(12, 4.5);
+    // 4. Low ground mist clinging strictly to the cobblestones (y = 0.35, does not blur gate or camera)
+    const gateFogGeo = new THREE.PlaneGeometry(6.5, 1.2);
     const gateFogPositions = [
-      [-2.0, 1.2, -19.5],
-      [2.0, 1.3, -17.4],
+      [-2.0, 0.35, -20.0],
+      [2.0, 0.35, -18.5],
     ];
 
     for (let [gx, gy, gz] of gateFogPositions) {
       const gPlane = new THREE.Mesh(gateFogGeo, sharedFogMat);
       gPlane.position.set(gx, gy, gz);
-      gPlane.rotation.x = -0.12;
+      gPlane.rotation.x = -0.05;
       this.scene.add(gPlane);
       this.gateThresholdFogPlanes.push(gPlane);
     }
@@ -2411,17 +2474,38 @@ export class HorrorEnvironment {
   }
 
   /**
-   * Adjust fog density based on distance to the ominous gate
+   * Adjust fog density based on distance to the ominous gate and player position.
+   * When approaching or inside the bungalow (z <= -56.0), expands fog range and blends
+   * into warm interior ambient tones so interior rooms remain 100% visible and unhindered.
    */
-  public updateGateProximity(distanceToGate: number): void {
+  public updateGateProximity(distanceToGate: number, playerPosZ?: number): void {
     const factor = Math.max(0, Math.min(1, 1 - distanceToGate / 28));
 
     if (this.scene.fog && this.scene.fog instanceof THREE.Fog) {
-      // Linear fog: base near = 16, far = 92. Approaching gate creates gentle mist without solid wall
-      this.scene.fog.near = 16 - factor * 4;
-      this.scene.fog.far = 92 - factor * 14;
+      if (playerPosZ !== undefined && playerPosZ <= -56.0) {
+        // Player is on the veranda or entering the bungalow interior (z in [-56.0, -80.0])
+        const interiorT = Math.min(1.0, Math.max(0.0, (-56.0 - playerPosZ) / 3.5));
+        this.scene.fog.near = 18 + interiorT * 42; // extends to 60m (zero fog inside all 4 rooms)
+        this.scene.fog.far = 100 + interiorT * 80; // extends to 180m
+        const extFogColor = new THREE.Color(0x0d1520);
+        const intFogColor = new THREE.Color(0x14100c);
+        this.scene.fog.color.lerpColors(extFogColor, intFogColor, interiorT);
+        if (this.scene.background instanceof THREE.Color) {
+          const extBg = new THREE.Color(0x0b1118);
+          const intBg = new THREE.Color(0x0a0806);
+          this.scene.background.lerpColors(extBg, intBg, interiorT);
+        }
+      } else {
+        // Exterior linear fog: keep foreground crisp & clear while maintaining deep background mist
+        this.scene.fog.near = 18;
+        this.scene.fog.far = 100;
+        this.scene.fog.color.setHex(0x0d1520);
+        if (this.scene.background instanceof THREE.Color) {
+          this.scene.background.setHex(0x0b1118);
+        }
+      }
     } else if (this.scene.fog && this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.density = 0.016 + factor * 0.010;
+      this.scene.fog.density = 0.014;
     }
 
     // Adjust ground fog opacities subtly
@@ -2503,8 +2587,8 @@ export class HorrorEnvironment {
         this.chainDropY -= this.chainDropVelocity * delta;
 
         const groundRestY = 0.12;
-        const padlockY = Math.max(groundRestY, 3.15 + this.chainDropY);
-        const chainY = Math.max(groundRestY, 2.85 + this.chainDropY);
+        const padlockY = Math.max(groundRestY, 2.45 + this.chainDropY);
+        const chainY = Math.max(groundRestY, 2.20 + this.chainDropY);
 
         if (this.padlockGroup) {
           this.padlockGroup.position.y = padlockY;
@@ -2561,6 +2645,31 @@ export class HorrorEnvironment {
           this.padlockGroup.rotation.set(0, 0, 0);
           this.padlockGroup.position.set(0, 3.15, 0.22);
         }
+      }
+    }
+
+    // 6c. Gate physical impact shake
+    if (this.gateShakeTimer > 0) {
+      this.gateShakeTimer -= delta;
+      const decay = Math.max(0, this.gateShakeTimer / 0.95);
+      const shakeY = Math.sin(this.gateShakeTimer * this.gateShakeFrequency) * this.gateShakeIntensity * decay;
+      const shakeZ = Math.cos(this.gateShakeTimer * this.gateShakeFrequency * 0.8) * this.gateShakeIntensity * 0.4 * decay;
+      if (this.leftGateWing && this.gateOpenProgress < 0.05) {
+        this.leftGateWing.rotation.y = shakeY;
+        this.leftGateWing.position.z = shakeZ;
+      }
+      if (this.rightGateWing && this.gateOpenProgress < 0.05) {
+        this.rightGateWing.rotation.y = -shakeY;
+        this.rightGateWing.position.z = -shakeZ;
+      }
+    } else if (this.gateOpenProgress < 0.05) {
+      if (this.leftGateWing) {
+        this.leftGateWing.rotation.y = 0;
+        this.leftGateWing.position.z = 0;
+      }
+      if (this.rightGateWing) {
+        this.rightGateWing.rotation.y = 0;
+        this.rightGateWing.position.z = 0;
       }
     }
 
@@ -2651,16 +2760,16 @@ export class HorrorEnvironment {
       }
     });
 
-    // 12. Lamp 3 Environmental Shift Reveal (Fog dissipates, brambles part)
-    if (this.lamp3Data && this.lamp3Data.isRevealed && this.lamp3Data.revealProgress < 1) {
-      this.lamp3Data.revealProgress = Math.min(1, this.lamp3Data.revealProgress + delta * 0.35);
-      const fogMat = this.lamp3Data.fogVeil.material as THREE.MeshBasicMaterial;
-      fogMat.opacity = Math.max(0, 0.94 * (1 - this.lamp3Data.revealProgress));
-      if (fogMat.opacity <= 0.02) {
-        this.lamp3Data.fogVeil.visible = false;
+    // 12. Lamp 3 Spawn Glow Spark (Subtle horror spark effect when materialized)
+    if (this.lamp3SpawnTimer > 0) {
+      this.lamp3SpawnTimer -= delta;
+      if (this.lamp3Data && !this.lamp3Data.isLit) {
+        const spark = (Math.sin(elapsedTime * 42.0) * 0.5 + 0.5) * 0.35;
+        this.lamp3Data.light.intensity = spark;
       }
-      this.lamp3Data.brambles.position.y = -this.lamp3Data.revealProgress * 0.45;
-      this.lamp3Data.brambles.rotation.z = this.lamp3Data.revealProgress * 0.4;
+      if (this.lamp3SpawnTimer <= 0 && this.lamp3Data && !this.lamp3Data.isLit) {
+        this.lamp3Data.light.intensity = 0;
+      }
     }
 
     // 13. Bungalow Window Flicker (Triggered by Lamp 2)
@@ -2829,13 +2938,11 @@ export class HorrorEnvironment {
     // 3. LAMP 2: DEAD TREE AREA (Outside gate, to the RIGHT)
     this.buildDeadTreeArea();
 
-    // 4. LAMP 3: HIDDEN STONE ALCOVE (Outside gate, concealed initially)
-    this.buildHiddenAlcoveArea();
+    // 4. LAMP 3: DYNAMIC SPAWN - MUST NOT EXIST INITIALLY
+    // Lamp 3 is NOT created or added to the scene at startup.
+    // It dynamically spawns beside the main bungalow gate only when Lamp 1 AND Lamp 2 are both lit.
 
-    // 5. HIDDEN KEY COMPARTMENT & OLD IRON KEY (Outside gate, left pillar base)
-    this.buildKeyCompartmentAndKey();
-
-    // 6. BUNGALOW FLICKER WINDOW (Mounted on the distant mansion facade)
+    // 5. BUNGALOW FLICKER WINDOW (Mounted on the distant mansion facade)
     this.buildBungalowFlickerWindow();
   }
 
@@ -3014,138 +3121,63 @@ export class HorrorEnvironment {
   }
 
   /**
-   * LAMP 3: HIDDEN ALCOVE (Outside Main Gate, along outer perimeter wall)
-   * Obscured at game start by dense dark fog veil and tangled dead brambles.
-   * Only revealed once Lamp 1 AND Lamp 2 are both lit!
+   * LAMP 3 DYNAMIC SPAWN:
+   * Dynamically spawns Lamp 3 on an ornamental carved stone pedestal beside the main bungalow gate.
+   * Lamp 3 does NOT exist anywhere in the environment until Lamp 1 AND Lamp 2 are both lit.
+   * Positioned cleanly beside the main gate right pillar, completely unobstructed, eye-level, and visible.
    */
-  private buildHiddenAlcoveArea(): void {
-    const alcoveGroup = new THREE.Group();
-    alcoveGroup.position.set(this.lamp3Position.x, 0, this.lamp3Position.z);
+  public spawnLamp3(): void {
+    if (this.isLamp3Spawned || this.lamp3Data) return;
+
+    this.isLamp3Spawned = true;
+    this.lamp3SpawnTimer = 0.8; // Brief subtle horror spawn glow/spark
+
+    // 1. Carved stone pedestal / plinth standing beside the right main gate pillar
+    const pedestalGroup = new THREE.Group();
+    pedestalGroup.position.set(this.lamp3Position.x, 0, this.lamp3Position.z);
 
     const stoneMat = new THREE.MeshStandardMaterial({
-      color: 0x2e302c,
-      roughness: 0.9,
-      metalness: 0.1,
+      color: 0x383c39,
+      roughness: 0.86,
+      metalness: 0.12,
+    });
+    const carvedMat = new THREE.MeshStandardMaterial({
+      color: 0x2c302d,
+      roughness: 0.90,
+      metalness: 0.08,
     });
 
-    // Outer stone wall buttress forming an alcove nook
-    const wallButtress = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.4, 1.2), stoneMat);
-    wallButtress.position.set(0.6, 1.2, -0.4);
-    alcoveGroup.add(wallButtress);
+    // Tier 1: Plinth stepped base
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.22, 0.56), stoneMat);
+    base.position.set(0, 0.11, 0);
+    base.castShadow = true;
+    base.receiveShadow = true;
+    pedestalGroup.add(base);
 
-    // Angled collapsed granite slab creating a sheltered crevice
-    const angledSlab = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.8, 0.22), stoneMat);
-    angledSlab.position.set(-0.4, 0.9, 0.3);
-    angledSlab.rotation.y = 0.45;
-    angledSlab.rotation.z = -0.25;
-    alcoveGroup.add(angledSlab);
+    // Tier 2: Fluted stone pedestal shaft
+    const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.72, 0.42), carvedMat);
+    shaft.position.set(0, 0.58, 0);
+    shaft.castShadow = true;
+    shaft.receiveShadow = true;
+    pedestalGroup.add(shaft);
 
-    // Recessed shelf inside the crevice where Lamp 3 rests
-    const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.16, 0.6), stoneMat);
-    shelf.position.set(0, 0.76, 0);
-    alcoveGroup.add(shelf);
+    // Tier 3: Carved stone capital table on top (y = 1.05)
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.15, 0.52), stoneMat);
+    cap.position.set(0, 1.01, 0);
+    cap.castShadow = true;
+    cap.receiveShadow = true;
+    pedestalGroup.add(cap);
 
-    // Dense Tangled Brambles covering the alcove opening
-    const bramblesGroup = new THREE.Group();
-    const vineMat = new THREE.MeshStandardMaterial({
-      color: 0x1a1612,
-      roughness: 0.95,
-      metalness: 0.05,
-    });
-    for (let b = 0; b < 7; b++) {
-      const bramble = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.045, 6, 12, Math.PI * 1.3), vineMat);
-      bramble.position.set(-0.35 + b * 0.12, 0.8 + (b % 3) * 0.25, 0.35);
-      bramble.rotation.set(0.4, b * 0.6, 0.3);
-      bramblesGroup.add(bramble);
-    }
-    alcoveGroup.add(bramblesGroup);
+    this.scene.add(pedestalGroup);
 
-    // Dense Murky Dark Fog Veil Plane concealing the crevice at game start
-    const fogVeilMat = new THREE.MeshBasicMaterial({
-      color: 0x090e14,
-      transparent: true,
-      opacity: 0.94,
-      depthWrite: false,
-    });
-    const fogVeil = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.2), fogVeilMat);
-    fogVeil.position.set(0, 1.1, 0.45);
-    alcoveGroup.add(fogVeil);
-
-    this.scene.add(alcoveGroup);
-
-    // Build the vintage oil lamp sitting on the recessed shelf
+    // 2. Vintage Oil Lamp sitting solidly on top of the stone pedestal (at y = 1.05)
     const lampMesh = this.createOilLampMesh('LAMP_3', this.lamp3Position);
 
     this.lamp3Data = {
       ...lampMesh,
-      fogVeil,
-      brambles: bramblesGroup,
-      isRevealed: false,
-      revealProgress: 0,
+      pedestalGroup,
+      isRevealed: true,
     };
-  }
-
-  /**
-   * HIDDEN KEY COMPARTMENT & OLD IRON KEY (Outside Main Gate, on left pillar base)
-   * Compartment clicks open and reveals the key after the 3-lamp ritual is complete.
-   */
-  private buildKeyCompartmentAndKey(): void {
-    const compGroup = new THREE.Group();
-    compGroup.position.copy(this.keyPosition);
-
-    // Carved stone compartment box
-    const boxMat = new THREE.MeshStandardMaterial({
-      color: 0x242220,
-      roughness: 0.85,
-      metalness: 0.15,
-    });
-    const compBox = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.42, 0.28), boxMat);
-    compBox.position.set(0, 0, 0);
-    compGroup.add(compBox);
-
-    // Compartment door plate
-    const ironDoorMat = new THREE.MeshStandardMaterial({
-      color: 0x2e2924,
-      roughness: 0.72,
-      metalness: 0.65,
-    });
-    this.keyCompartmentDoor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.36, 0.04), ironDoorMat);
-    this.keyCompartmentDoor.position.set(0, 0, 0.15);
-    compGroup.add(this.keyCompartmentDoor);
-
-    // 3D Old Gothic Iron Key
-    this.ironKeyMesh = new THREE.Group();
-    this.ironKeyMesh.position.set(0, -0.02, 0.06);
-    this.ironKeyMesh.rotation.z = Math.PI / 4;
-    this.ironKeyMesh.visible = false; // Hidden until revealed
-
-    const keyMat = new THREE.MeshStandardMaterial({
-      color: 0x3a3d42,
-      roughness: 0.45,
-      metalness: 0.85,
-    });
-
-    // Key bow (trefoil / gothic circular loop)
-    const bow = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.016, 8, 16), keyMat);
-    bow.position.set(0, 0.12, 0);
-    this.ironKeyMesh.add(bow);
-
-    // Key stem
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.24, 8), keyMat);
-    stem.position.set(0, 0, 0);
-    this.ironKeyMesh.add(stem);
-
-    // Key bit wards (notched teeth)
-    const bit1 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.02, 0.014), keyMat);
-    bit1.position.set(0.03, -0.07, 0);
-    this.ironKeyMesh.add(bit1);
-
-    const bit2 = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.018, 0.014), keyMat);
-    bit2.position.set(0.024, -0.10, 0);
-    this.ironKeyMesh.add(bit2);
-
-    compGroup.add(this.ironKeyMesh);
-    this.scene.add(compGroup);
   }
 
   /**
@@ -3360,10 +3392,15 @@ export class HorrorEnvironment {
    * Lights an oil lamp with realistic flame, smoke, and warm illumination.
    */
   public lightLamp(lampId: 'LAMP_1' | 'LAMP_2' | 'LAMP_3'): void {
-    let lamp: { flame: THREE.Mesh; smoke: THREE.Mesh; light: THREE.PointLight; isLit: boolean };
+    let lamp: { flame: THREE.Mesh; smoke: THREE.Mesh; light: THREE.PointLight; isLit: boolean } | null;
     if (lampId === 'LAMP_1') lamp = this.lamp1Data;
     else if (lampId === 'LAMP_2') lamp = this.lamp2Data;
-    else lamp = this.lamp3Data;
+    else {
+      if (!this.lamp3Data) this.spawnLamp3();
+      lamp = this.lamp3Data;
+    }
+
+    if (!lamp) return;
 
     lamp.isLit = true;
     lamp.flame.visible = true;
@@ -3373,12 +3410,10 @@ export class HorrorEnvironment {
   }
 
   /**
-   * Environmental shift that reveals Lamp 3 outside the gate.
-   * Fog veil slowly dissipates and tangled brambles sink down into the moss.
+   * Spawns Lamp 3 beside the main bungalow gate when condition is met.
    */
   public revealLamp3(): void {
-    if (!this.lamp3Data) return;
-    this.lamp3Data.isRevealed = true;
+    this.spawnLamp3();
   }
 
   /**
@@ -3389,26 +3424,41 @@ export class HorrorEnvironment {
   }
 
   /**
-   * Reveals the Old Iron Key outside the gate in the pillar compartment.
+   * Reveals the Heavy Iron Hammer outside the gate upon completing the 3-lamp ritual.
    */
-  public revealIronKey(): void {
-    this.isKeyRevealed = true;
-    if (this.keyCompartmentDoor) {
-      this.keyCompartmentDoor.position.x = 0.22; // slide open
+  public revealPuzzleHammer(): void {
+    this.isHammerRevealed = true;
+    if (this.puzzleHammerGroup) {
+      this.puzzleHammerGroup.visible = true;
     }
-    if (this.ironKeyMesh) {
-      this.ironKeyMesh.visible = true;
+    if (this.puzzleHammerLight) {
+      this.puzzleHammerLight.intensity = 0.85;
     }
   }
 
   /**
-   * Collects the Old Iron Key into investigator inventory.
+   * Collects the Heavy Iron Hammer into investigator inventory.
    */
-  public collectIronKey(): void {
-    this.isKeyCollected = true;
-    if (this.ironKeyMesh) {
-      this.ironKeyMesh.visible = false;
+  public collectPuzzleHammer(): void {
+    this.isHammerCollected = true;
+    if (this.puzzleHammerGroup) {
+      this.puzzleHammerGroup.visible = false;
+      this.scene.remove(this.puzzleHammerGroup);
     }
+    if (this.puzzleHammerLight) {
+      this.puzzleHammerLight.intensity = 0;
+    }
+  }
+
+  /**
+   * Compatibility stubs for any legacy key references
+   */
+  public revealIronKey(): void {
+    this.revealPuzzleHammer();
+  }
+
+  public collectIronKey(): void {
+    this.collectPuzzleHammer();
   }
 
   /**
@@ -3434,19 +3484,22 @@ export class HorrorEnvironment {
     this.gateOpenProgress = Math.min(1, Math.max(0, progress));
     this.isGateOpen = this.gateOpenProgress > 0.05;
 
-    // Swing gate wings outward
+    // Swing gate wings outward cleanly without clipping into the stone pillars
     if (this.leftGateWing && this.rightGateWing) {
-      this.leftGateWing.rotation.y = -this.gateOpenProgress * 1.32;
-      this.rightGateWing.rotation.y = this.gateOpenProgress * 1.32;
+      this.leftGateWing.rotation.y = -this.gateOpenProgress * 1.38;
+      this.rightGateWing.rotation.y = this.gateOpenProgress * 1.38;
     }
 
-    // Hide padlock and chains once unlocking begins
-    if (this.padlockGroup) {
-      this.padlockGroup.visible = this.gateOpenProgress < 0.15;
+    // Fade out threshold ground mist as gate opens so pathway is completely clear
+    if (this.gateThresholdFogPlanes && this.gateThresholdFogPlanes.length > 0) {
+      for (const p of this.gateThresholdFogPlanes) {
+        if (p.material && (p.material as any).opacity !== undefined) {
+          (p.material as any).opacity = Math.max(0, 0.22 * (1.0 - this.gateOpenProgress * 1.5));
+        }
+      }
     }
-    if (this.swingingChainGroup) {
-      this.swingingChainGroup.visible = this.gateOpenProgress < 0.15;
-    }
+
+    // Keep fallen padlock and loose chain resting on the ground
     if (this.wrappedChainLinks && this.wrappedChainLinks.length > 0) {
       const showWrapped = this.gateOpenProgress < 0.05 && !this.isChainsDropped;
       for (const link of this.wrappedChainLinks) {
@@ -3454,10 +3507,40 @@ export class HorrorEnvironment {
       }
     }
 
-    // Move physical gate collider out of player path once open
-    if (this.gateCollider && this.gateOpenProgress >= 0.25) {
-      this.gateCollider.min.y = 999;
-      this.gateCollider.max.y = 999;
+    // Move physical gate collider completely out of player path immediately upon opening
+    if (this.gateCollider) {
+      if (this.gateOpenProgress >= 0.05) {
+        this.gateCollider.min.set(9999, 9999, 9999);
+        this.gateCollider.max.set(9999, 9999, 9999);
+      }
+    }
+  }
+
+  /**
+   * Responds to the 3-rod hit sequence on the main gate.
+   * Shakes the wrought iron wings, vibrates chains, and rattles the padlock.
+   */
+  public strikeGate(hitNumber: 1 | 2 | 3): void {
+    if (hitNumber === 1) {
+      this.gateShakeTimer = 0.45;
+      this.gateShakeIntensity = 0.035;
+      this.gateShakeFrequency = 32;
+      this.chainScareMode = 'MOVING_BY_ITSELF';
+      this.chainScareTimer = 0;
+    } else if (hitNumber === 2) {
+      this.gateShakeTimer = 0.65;
+      this.gateShakeIntensity = 0.07;
+      this.gateShakeFrequency = 36;
+      this.chainScareMode = 'PADLOCK_SHAKING';
+      this.padlockShakeIntensity = 2.5;
+      this.chainScareTimer = 0;
+    } else {
+      this.gateShakeTimer = 0.95;
+      this.gateShakeIntensity = 0.12;
+      this.gateShakeFrequency = 42;
+      this.chainScareMode = 'PADLOCK_SHAKING';
+      this.padlockShakeIntensity = 4.5;
+      this.chainScareTimer = 0;
     }
   }
 
@@ -3528,6 +3611,19 @@ export class HorrorEnvironment {
     );
     splinter.rotation.z = (Math.random() - 0.5) * 0.6;
     this.bungalowDoorMesh.add(splinter);
+    this.doorSplinters.push(splinter);
+
+    // If fully breached with 3rd strike, immediately hide door wings, lock bar, and splinters
+    if (hitCount >= 3) {
+      if (this.bungalowDoorLeftWing) this.bungalowDoorLeftWing.visible = false;
+      if (this.bungalowDoorRightWing) this.bungalowDoorRightWing.visible = false;
+      if (this.bungalowDoorLockBar) this.bungalowDoorLockBar.visible = false;
+      this.doorSplinters.forEach((s) => (s.visible = false));
+      if (this.bungalowDoorCollider) {
+        this.bungalowDoorCollider.min.set(0, 999, 0);
+        this.bungalowDoorCollider.max.set(0, 999, 0);
+      }
+    }
 
     // Particle burst of wood splinters flying outward from the point of impact
     const particleCount = 28;
@@ -3561,17 +3657,29 @@ export class HorrorEnvironment {
     this.bungalowDoorOpenProgress = Math.min(1, Math.max(0, progress));
     this.isBungalowDoorOpening = this.bungalowDoorOpenProgress > 0.01;
 
-    // Both heavy wooden wings creak inward into the pitch-dark interior
-    if (this.bungalowDoorLeftWing && this.bungalowDoorRightWing) {
-      // Rotate around vertical hinge axis inward (negative Z direction)
-      this.bungalowDoorLeftWing.rotation.y = this.bungalowDoorOpenProgress * 1.55;
-      this.bungalowDoorRightWing.rotation.y = -this.bungalowDoorOpenProgress * 1.55;
+    // When the door is opened/breached, completely remove/hide the door wings, lock bar, and splinters
+    // so the doorway is 100% clean and unobstructed
+    if (this.bungalowDoorOpenProgress > 0.05) {
+      if (this.bungalowDoorLeftWing) this.bungalowDoorLeftWing.visible = false;
+      if (this.bungalowDoorRightWing) this.bungalowDoorRightWing.visible = false;
+      if (this.bungalowDoorLockBar) this.bungalowDoorLockBar.visible = false;
+      this.doorSplinters.forEach((s) => (s.visible = false));
+    } else {
+      if (this.bungalowDoorLeftWing) {
+        this.bungalowDoorLeftWing.visible = true;
+        this.bungalowDoorLeftWing.rotation.y = 0;
+      }
+      if (this.bungalowDoorRightWing) {
+        this.bungalowDoorRightWing.visible = true;
+        this.bungalowDoorRightWing.rotation.y = 0;
+      }
+      if (this.bungalowDoorLockBar) this.bungalowDoorLockBar.visible = true;
     }
 
-    // Move door collider away once door swings open
-    if (this.bungalowDoorCollider && this.bungalowDoorOpenProgress >= 0.3) {
-      this.bungalowDoorCollider.min.y = 999;
-      this.bungalowDoorCollider.max.y = 999;
+    // Move door collider away once door begins opening
+    if (this.bungalowDoorCollider && this.bungalowDoorOpenProgress >= 0.05) {
+      this.bungalowDoorCollider.min.set(0, 999, 0);
+      this.bungalowDoorCollider.max.set(0, 999, 0);
     }
   }
 }

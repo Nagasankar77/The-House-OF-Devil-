@@ -437,7 +437,7 @@ export class GameEngine {
     }
 
     // Update environmental fog & tension based on gate proximity
-    this.environment.updateGateProximity(distanceToGate);
+    this.environment.updateGateProximity(distanceToGate, this.player.position.z);
     horrorAudio.updateGateProximity(distanceToGate);
 
     // Gate opening animation progression
@@ -495,35 +495,36 @@ export class GameEngine {
       minCandidateDist = lamp2Dist;
     }
 
-    // 4. Lamp 3: Hidden Stone Alcove (dist <= 3.2m, only when revealed!)
+    // 4. Lamp 3: Beside Main Gate (dist <= 3.2m, only when spawned!)
     if (this.ritualState.lamp3Revealed && !this.ritualState.lamp3Lit && lamp3Dist <= 3.2 && lamp3Dist < minCandidateDist) {
       nextPrompt = {
         type: 'LAMP_3',
-        promptText: '[E] Light Lamp',
-        subText: 'Stone Crevice',
+        promptText: '[E] ACTIVATE LAMP',
+        subText: 'Beside Main Gate',
         distance: lamp3Dist,
       };
       minCandidateDist = lamp3Dist;
     }
 
-    // 5. Old Iron Key (dist <= 3.0m, only when revealed and not collected)
-    if (this.ritualState.keyRevealed && !this.ritualState.keyCollected && keyDist <= 3.0 && keyDist < minCandidateDist) {
+    // 5. Heavy Iron Hammer (dist <= 3.2m, after 3 lamps puzzle reveals it)
+    const puzzleHammerDist = playerPos.distanceTo(this.environment.puzzleHammerPosition);
+    if (this.ritualState.hammerRevealed && !this.ritualState.hasHammer && puzzleHammerDist <= 3.2 && puzzleHammerDist < minCandidateDist) {
       nextPrompt = {
-        type: 'GATE_KEY',
-        promptText: '[E] Take Old Iron Key',
-        subText: 'Pillar Compartment',
-        distance: keyDist,
+        type: 'HAMMER_PICKUP',
+        promptText: '[E] PICK UP HAMMER',
+        subText: 'Heavy Iron Hammer',
+        distance: puzzleHammerDist,
       };
-      minCandidateDist = keyDist;
+      minCandidateDist = puzzleHammerDist;
     }
 
-    // 6. Gate (dist <= 4.2m, when not fully open)
-    if (distanceToGate <= this.environment.gateInteractionDistance && !this.ritualState.gateFullyOpen && distanceToGate < minCandidateDist) {
-      if (this.ritualState.keyCollected && !this.ritualState.gateUnlocked) {
+    // 6. Gate (dist <= 4.8m, when not fully open)
+    if (distanceToGate <= this.environment.gateInteractionDistance + 0.8 && !this.ritualState.gateFullyOpen && distanceToGate < minCandidateDist) {
+      if (this.ritualState.hasHammer && !this.ritualState.gateUnlocked) {
         nextPrompt = {
           type: 'GATE_CHAIN',
-          promptText: '[E] Unlock Gate',
-          subText: 'Use Old Iron Key',
+          promptText: '[E] Strike Gate',
+          subText: 'Hit with Hammer',
           distance: distanceToGate,
         };
         minCandidateDist = distanceToGate;
@@ -531,7 +532,7 @@ export class GameEngine {
         nextPrompt = {
           type: 'GATE_CHAIN',
           promptText: '[E] Inspect Gate',
-          subText: 'Chained Shut',
+          subText: 'Chained Shut: Heavy Iron Padlock',
           distance: distanceToGate,
         };
         minCandidateDist = distanceToGate;
@@ -1073,11 +1074,12 @@ export class GameEngine {
       this.environment.chainScareMode = 'PADLOCK_SHAKING';
       this.environment.padlockShakeIntensity = 1.0;
 
-      // Padlock settles, stone compartment clicks open revealing old iron key
+      // Padlock settles, stone plinth reveals heavy iron hammer
       setTimeout(() => {
         this.environment.chainScareMode = 'NORMAL';
-        this.environment.revealIronKey();
-        this.ritualState.keyRevealed = true;
+        this.environment.revealPuzzleHammer();
+        this.ritualState.hammerRevealed = true;
+        this.ritualState.currentObjective = 'PICK UP THE HAMMER NEAR THE STONE CREVICE';
         horrorAudio.setPsychologicalSilence(false);
         if (this.onRitualStateChange) this.onRitualStateChange(this.ritualState);
       }, 1400);
@@ -1200,10 +1202,14 @@ export class GameEngine {
     this.storyModePhase = 'INACTIVE';
     this.ritualState.storyModeActive = false;
     this.ritualState.storyModeCompleted = true;
-    this.ritualState.currentObjective = 'FIND YAMINI';
+    this.ritualState.currentObjective = 'INSPECT THE MAIN GATE';
 
-    // Restore gameplay controls
+    // Restore gameplay controls immediately
     this.player.setMenuMode(false);
+    this.player.isInspecting = false;
+    this.player.setCameraInputLocked(false);
+    this.player.isStoryModeActive = false;
+    this.player.resetMovement();
 
     if (this.onStorySubtitleChange) {
       this.onStorySubtitleChange(null);
@@ -1217,9 +1223,6 @@ export class GameEngine {
     if (this.onRitualStateChange) {
       this.onRitualStateChange(this.ritualState);
     }
-
-    // Immediately trigger Critical Horror Scare Sequence ("The House of Devil")
-    this.postStoryScare.startScareSequence();
   }
 
   public static createRenderer(
