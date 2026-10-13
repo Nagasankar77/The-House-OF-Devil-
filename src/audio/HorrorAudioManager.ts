@@ -3477,6 +3477,50 @@ export class HorrorAudioManager {
     });
   }
 
+  /**
+   * Realistic vintage mechanical flashlight toggle switch click
+   */
+  public playFlashlightClick(turnOn = true): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+
+      // 1. Sharp mechanical switch transient (snapping metal contact)
+      const osc = this.ctx.createOscillator();
+      osc.type = 'triangle';
+      const startFreq = turnOn ? 2200 : 1600;
+      const endFreq = turnOn ? 850 : 520;
+      osc.frequency.setValueAtTime(startFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, now + 0.016);
+
+      const oscGain = this.ctx.createGain();
+      oscGain.gain.setValueAtTime(0.0001, now);
+      oscGain.gain.linearRampToValueAtTime(0.18, now + 0.002);
+      oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+
+      osc.connect(oscGain);
+      oscGain.connect(this.sfxBus);
+      osc.start(now);
+      osc.stop(now + 0.05);
+
+      // 2. Heavy casing resonance snap
+      const snapOsc = this.ctx.createOscillator();
+      snapOsc.type = 'sine';
+      snapOsc.frequency.setValueAtTime(turnOn ? 420 : 320, now);
+      snapOsc.frequency.exponentialRampToValueAtTime(110, now + 0.035);
+
+      const snapGain = this.ctx.createGain();
+      snapGain.gain.setValueAtTime(0.0001, now);
+      snapGain.gain.linearRampToValueAtTime(0.12, now + 0.003);
+      snapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+
+      snapOsc.connect(snapGain);
+      snapGain.connect(this.sfxBus);
+      snapOsc.start(now);
+      snapOsc.stop(now + 0.06);
+    } catch (_) {}
+  }
+
   public dispose(): void {
     this.isEventManagerRunning = false;
     this.isHeartbeatRunning = false;

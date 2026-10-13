@@ -646,6 +646,16 @@ export default function Game() {
     }
   }, [settings.graphicsQuality]);
 
+  // Flashlight toggle with realistic audio click and player controller synchronization
+  const toggleFlashlight = useCallback(() => {
+    setSettings((prev) => {
+      const next = !prev.flashlightEnabled;
+      contextRef.current?.player.setFlashlight(next);
+      horrorAudio.playFlashlightClick(next);
+      return { ...prev, flashlightEnabled: next };
+    });
+  }, []);
+
   // ==================== INPUT SYSTEM & KEYBOARD HANDLERS ====================
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -674,6 +684,10 @@ export default function Game() {
           break;
         case 'KeyE':
           handlePrimaryInteraction();
+          break;
+        case 'KeyF':
+          e.preventDefault();
+          toggleFlashlight();
           break;
         case 'F3':
         case 'Backquote':
@@ -786,7 +800,7 @@ export default function Game() {
       document.removeEventListener('pointerlockerror', handlePointerLockError);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
-  }, [gameState, settings.cameraSensitivity, activePrompt, ritualState]);
+  }, [gameState, settings.cameraSensitivity, activePrompt, ritualState, toggleFlashlight]);
 
   // ==================== ONE-HIT MAIN GATE HAMMER SEQUENCE ====================
   const executeGateStrike = useCallback((ctx: HorrorSceneContext) => {
@@ -1056,15 +1070,6 @@ export default function Game() {
       }
     }
   }, [activePrompt, isNoteOpen, inspectedClue, ritualState]);
-
-  // Flashlight toggle
-  const toggleFlashlight = useCallback(() => {
-    setSettings((prev) => {
-      const next = !prev.flashlightEnabled;
-      contextRef.current?.player.setFlashlight(next);
-      return { ...prev, flashlightEnabled: next };
-    });
-  }, []);
 
   // State transitions
   const handleEnterExperience = useCallback(() => {

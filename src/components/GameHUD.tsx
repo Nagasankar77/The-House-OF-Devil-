@@ -95,10 +95,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           openInspection();
         }
       }
-      if (e.key === 'f' || e.key === 'F') {
-        onToggleFlashlight();
-        horrorAudio.playMenuHover();
-      }
       if (e.key === 'Escape') {
         if (isNoteOpen && onCloseNote) {
           onCloseNote();
@@ -221,13 +217,14 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               onToggleFlashlight();
               horrorAudio.playMenuHover();
             }}
-            className={`px-3 py-1.5 text-xs font-mono tracking-wider uppercase border transition-all cursor-pointer ${
+            className={`px-3 py-1.5 text-xs font-mono tracking-wider uppercase border transition-all cursor-pointer flex items-center space-x-1.5 ${
               flashlightOn
-                ? 'border-amber-600/70 bg-amber-950/30 text-amber-200 shadow-[0_0_10px_rgba(217,119,6,0.2)]'
+                ? 'border-amber-500/80 bg-amber-950/50 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.35)]'
                 : 'border-stone-800 bg-stone-950/60 text-stone-500 hover:text-stone-300 hover:border-stone-700'
             }`}
           >
-            ● [F] FLASHLIGHT
+            <span className={`inline-block w-2 h-2 rounded-full ${flashlightOn ? 'bg-amber-400 animate-pulse' : 'bg-stone-600'}`} />
+            <span>[F] LIGHT {flashlightOn ? 'ON' : 'OFF'}</span>
           </button>
 
           <button

@@ -74,9 +74,12 @@ export class PlayerController {
   public onIntroLightning?: () => void;
   public onIntroFinished?: () => void;
 
-  // Flashlight state & subtle organic flicker
+  // Flashlight state & realistic multi-stage illumination
   public isFlashlightOn = false;
-  private baseFlashlightIntensity = 3.6;
+  private baseFlashlightIntensity = 42.0;
+  private baseSpillIntensity = 16.0;
+  private baseHotspotIntensity = 32.0;
+  private baseBounceIntensity = 2.4;
   private flickerTimer = 0;
   private nextFlickerTime = 24.0 + Math.random() * 16.0;
   private flickerSequence: { time: number; intensity: number }[] = [];
@@ -97,14 +100,18 @@ export class PlayerController {
   public fpRightArm!: THREE.Group;
   public fpLeftArm!: THREE.Group;
   private fpFlashlightMesh!: THREE.Group;
+  private fpFlashlightLensMat!: THREE.MeshStandardMaterial;
+  private fpFlashlightGlow!: THREE.PointLight;
   private fpHandKeyMesh!: THREE.Group;
   private fpHammerMesh!: THREE.Group;
   private fpHandLighterMesh!: THREE.Group;
   private fpHandFlameMesh!: THREE.Mesh;
   public flashlight!: THREE.SpotLight;
   public flashlightSpill!: THREE.SpotLight;
+  public flashlightHotspot!: THREE.SpotLight;
   public flashlightBounce!: THREE.PointLight;
   public flashlightTarget!: THREE.Object3D;
+  public cameraFlashlightRig!: THREE.Group;
 
   // Third-person character body (hidden in FPP to prevent camera clipping)
   private torso!: THREE.Group;
@@ -194,13 +201,15 @@ export class PlayerController {
       metalness: 0.92,
     });
 
-    // Flashlight lens glass
-    const lensMat = new THREE.MeshStandardMaterial({
+    // Flashlight lens glass with dynamic emissive illumination
+    this.fpFlashlightLensMat = new THREE.MeshStandardMaterial({
       color: 0x9cb0c5,
       roughness: 0.15,
       metalness: 0.2,
       transparent: true,
-      opacity: 0.65,
+      opacity: 0.75,
+      emissive: 0x000000,
+      emissiveIntensity: 0,
     });
 
     // =========================================================================
@@ -285,11 +294,16 @@ export class PlayerController {
     fRim.position.z = -0.175;
     this.fpFlashlightMesh.add(fRim);
 
-    // Recessed front lens
+    // Recessed front lens with reactive glow material
     const lensGeo = new THREE.CircleGeometry(0.042, 16);
-    const lens = new THREE.Mesh(lensGeo, lensMat);
+    const lens = new THREE.Mesh(lensGeo, this.fpFlashlightLensMat);
     lens.position.z = -0.172;
     this.fpFlashlightMesh.add(lens);
+
+    // Warm local bulb glow pointlight right at the bezel lens
+    this.fpFlashlightGlow = new THREE.PointLight(0xfffaea, 0, 1.8, 1.8);
+    this.fpFlashlightGlow.position.set(0, 0, -0.18);
+    this.fpFlashlightMesh.add(this.fpFlashlightGlow);
 
     // Power switch slide button
     const switchGeo = new THREE.BoxGeometry(0.018, 0.014, 0.04);
@@ -426,29 +440,40 @@ export class PlayerController {
     this.fpRightArm.add(this.fpHandLighterMesh);
 
     // =========================================================================
-    // FLASHLIGHT LIGHT SOURCES (Dual-stage realistic beam + soft spill)
+    // FLASHLIGHT LIGHT SOURCES (Mounted directly to camera for 100% true gaze tracking)
     // =========================================================================
     this.flashlightTarget = new THREE.Object3D();
-    this.flashlightTarget.position.set(0, 0, -22);
+    this.flashlightTarget.position.set(0, 0, -32);
     this.camera.add(this.flashlightTarget);
 
+    this.cameraFlashlightRig = new THREE.Group();
+    // Offset slightly lower-right of eye level (0.16m right, -0.16m down) for authentic held beam angle
+    this.cameraFlashlightRig.position.set(0.16, -0.16, -0.05);
+    this.camera.add(this.cameraFlashlightRig);
+
     // 1. Primary core beam: warm realistic beam with soft edge falloff
-    this.flashlight = new THREE.SpotLight(0xfffaed, 0, 28, Math.PI / 8.5, 0.70, 1.8);
-    this.flashlight.position.set(0, 0, -0.18);
+    this.flashlight = new THREE.SpotLight(0xfffaed, 0, 48, Math.PI / 7.2, 0.65, 1.7);
+    this.flashlight.position.set(0, 0, 0);
     this.flashlight.target = this.flashlightTarget;
-    this.flashlight.castShadow = false; // Flashlight uses direct and spill lighting; directional moonlight handles cinematic shadows
-    this.fpFlashlightMesh.add(this.flashlight);
+    this.flashlight.castShadow = false;
+    this.cameraFlashlightRig.add(this.flashlight);
 
-    // 2. Wide soft spill: illuminates ground and mist without harsh edges
-    this.flashlightSpill = new THREE.SpotLight(0xdce7f4, 0, 16, Math.PI / 5.2, 0.88, 2.0);
-    this.flashlightSpill.position.set(0, 0, -0.18);
+    // 2. Wide soft spill: illuminates ground, walls, and misty periphery
+    this.flashlightSpill = new THREE.SpotLight(0xdbe6f5, 0, 26, Math.PI / 4.0, 0.85, 1.85);
+    this.flashlightSpill.position.set(0, 0, 0);
     this.flashlightSpill.target = this.flashlightTarget;
-    this.fpFlashlightMesh.add(this.flashlightSpill);
+    this.cameraFlashlightRig.add(this.flashlightSpill);
 
-    // 3. Ambient lens glow: gentle ambient bounce around hand and nearby surfaces
-    this.flashlightBounce = new THREE.PointLight(0xffeedd, 0, 2.2, 2.0);
-    this.flashlightBounce.position.set(0, 0, -0.10);
-    this.fpFlashlightMesh.add(this.flashlightBounce);
+    // 3. Piercing central hotspot: focused beam highlighting objects aimed at
+    this.flashlightHotspot = new THREE.SpotLight(0xffffff, 0, 36, Math.PI / 16.0, 0.40, 1.7);
+    this.flashlightHotspot.position.set(0, 0, 0);
+    this.flashlightHotspot.target = this.flashlightTarget;
+    this.cameraFlashlightRig.add(this.flashlightHotspot);
+
+    // 4. Near-field ambient bounce: gentle illumination around foreground
+    this.flashlightBounce = new THREE.PointLight(0xffeedd, 0, 3.2, 2.0);
+    this.flashlightBounce.position.set(0, 0, 0.1);
+    this.cameraFlashlightRig.add(this.flashlightBounce);
 
     this.fpViewmodel.add(this.fpRightArm);
 
@@ -1182,10 +1207,25 @@ export class PlayerController {
       this.flashlight.intensity = enabled ? this.baseFlashlightIntensity : 0;
     }
     if (this.flashlightSpill) {
-      this.flashlightSpill.intensity = enabled ? 1.2 : 0;
+      this.flashlightSpill.intensity = enabled ? this.baseSpillIntensity : 0;
+    }
+    if (this.flashlightHotspot) {
+      this.flashlightHotspot.intensity = enabled ? this.baseHotspotIntensity : 0;
     }
     if (this.flashlightBounce) {
-      this.flashlightBounce.intensity = enabled ? 0.25 : 0;
+      this.flashlightBounce.intensity = enabled ? this.baseBounceIntensity : 0;
+    }
+    if (this.fpFlashlightGlow) {
+      this.fpFlashlightGlow.intensity = enabled ? 1.8 : 0;
+    }
+    if (this.fpFlashlightLensMat) {
+      if (enabled) {
+        this.fpFlashlightLensMat.emissive.setHex(0xfffae0);
+        this.fpFlashlightLensMat.emissiveIntensity = 3.5;
+      } else {
+        this.fpFlashlightLensMat.emissive.setHex(0x000000);
+        this.fpFlashlightLensMat.emissiveIntensity = 0;
+      }
     }
   }
 
@@ -1204,15 +1244,21 @@ export class PlayerController {
       step.time -= delta;
       const ratio = step.intensity / this.baseFlashlightIntensity;
       this.flashlight.intensity = step.intensity;
-      if (this.flashlightSpill) this.flashlightSpill.intensity = 1.2 * ratio;
-      if (this.flashlightBounce) this.flashlightBounce.intensity = 0.25 * ratio;
+      if (this.flashlightSpill) this.flashlightSpill.intensity = this.baseSpillIntensity * ratio;
+      if (this.flashlightHotspot) this.flashlightHotspot.intensity = this.baseHotspotIntensity * ratio;
+      if (this.flashlightBounce) this.flashlightBounce.intensity = this.baseBounceIntensity * ratio;
+      if (this.fpFlashlightGlow) this.fpFlashlightGlow.intensity = 1.8 * ratio;
+      if (this.fpFlashlightLensMat) this.fpFlashlightLensMat.emissiveIntensity = 3.5 * ratio;
 
       if (step.time <= 0) {
         this.flickerSequence.shift();
         if (this.flickerSequence.length === 0) {
           this.flashlight.intensity = this.baseFlashlightIntensity;
-          if (this.flashlightSpill) this.flashlightSpill.intensity = 1.2;
-          if (this.flashlightBounce) this.flashlightBounce.intensity = 0.25;
+          if (this.flashlightSpill) this.flashlightSpill.intensity = this.baseSpillIntensity;
+          if (this.flashlightHotspot) this.flashlightHotspot.intensity = this.baseHotspotIntensity;
+          if (this.flashlightBounce) this.flashlightBounce.intensity = this.baseBounceIntensity;
+          if (this.fpFlashlightGlow) this.fpFlashlightGlow.intensity = 1.8;
+          if (this.fpFlashlightLensMat) this.fpFlashlightLensMat.emissiveIntensity = 3.5;
         }
       }
       return;
@@ -1223,12 +1269,12 @@ export class PlayerController {
       this.flickerTimer = 0;
       this.nextFlickerTime = 24.0 + Math.random() * 18.0;
       this.flickerSequence = [
-        { time: 0.05, intensity: 1.0 },
-        { time: 0.04, intensity: 3.6 },
-        { time: 0.06, intensity: 0.3 },
-        { time: 0.04, intensity: 3.2 },
-        { time: 0.03, intensity: 1.4 },
-        { time: 0.04, intensity: 3.6 },
+        { time: 0.05, intensity: this.baseFlashlightIntensity * 0.35 },
+        { time: 0.04, intensity: this.baseFlashlightIntensity * 1.05 },
+        { time: 0.06, intensity: this.baseFlashlightIntensity * 0.15 },
+        { time: 0.04, intensity: this.baseFlashlightIntensity * 0.95 },
+        { time: 0.03, intensity: this.baseFlashlightIntensity * 0.4 },
+        { time: 0.04, intensity: this.baseFlashlightIntensity },
       ];
     }
   }
@@ -1236,10 +1282,12 @@ export class PlayerController {
   public triggerFlashlightGlitch(): void {
     if (!this.isFlashlightOn) return;
     this.flickerSequence = [
-      { time: 0.08, intensity: 0.4 },
-      { time: 0.04, intensity: 2.8 },
-      { time: 0.12, intensity: 0.1 },
-      { time: 0.05, intensity: 3.6 },
+      { time: 0.08, intensity: this.baseFlashlightIntensity * 0.12 },
+      { time: 0.04, intensity: this.baseFlashlightIntensity * 0.8 },
+      { time: 0.12, intensity: 0 },
+      { time: 0.05, intensity: this.baseFlashlightIntensity * 0.9 },
+      { time: 0.03, intensity: this.baseFlashlightIntensity * 0.2 },
+      { time: 0.06, intensity: this.baseFlashlightIntensity },
     ];
   }
 

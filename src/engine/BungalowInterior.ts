@@ -413,6 +413,198 @@ export class BungalowTextureGenerator {
     this.cache.set('bath_tile', texture);
     return texture;
   }
+
+  public static createAgedLinenBedsheetTexture(): THREE.CanvasTexture {
+    if (this.cache.has('aged_linen')) return this.cache.get('aged_linen')!;
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // Aged antique linen/ecru cloth base
+    ctx.fillStyle = '#cfc4b2';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Cross-weave texture
+    ctx.fillStyle = 'rgba(165, 150, 130, 0.25)';
+    for (let i = 0; i < 512; i += 4) {
+      ctx.fillRect(0, i, 512, 1);
+      ctx.fillRect(i, 0, 1, 512);
+    }
+
+    // Faint water/age staining & dust smudges
+    for (let s = 0; s < 12; s++) {
+      const sx = Math.random() * 512;
+      const sy = Math.random() * 512;
+      const rad = 25 + Math.random() * 60;
+      const grad = ctx.createRadialGradient(sx, sy, 5, sx, sy, rad);
+      grad.addColorStop(0, 'rgba(110, 85, 60, 0.22)');
+      grad.addColorStop(0.7, 'rgba(125, 105, 80, 0.10)');
+      grad.addColorStop(1, 'rgba(140, 120, 95, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Subtle wrinkles / fold creases
+    ctx.strokeStyle = 'rgba(75, 60, 45, 0.28)';
+    ctx.lineWidth = 1.8;
+    for (let f = 0; f < 8; f++) {
+      let fx = Math.random() * 512;
+      let fy = Math.random() * 512;
+      ctx.beginPath();
+      ctx.moveTo(fx, fy);
+      for (let p = 0; p < 5; p++) {
+        fx += (Math.random() - 0.4) * 80;
+        fy += (Math.random() - 0.3) * 60;
+        ctx.lineTo(fx, fy);
+      }
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    this.cache.set('aged_linen', texture);
+    return texture;
+  }
+
+  public static createVintageQuiltTexture(): THREE.CanvasTexture {
+    if (this.cache.has('vintage_quilt')) return this.cache.get('vintage_quilt')!;
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // Faded deep burgundy / vintage wine base
+    ctx.fillStyle = '#421a1f';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Diamond quilting stitch pattern
+    const step = 64;
+    ctx.strokeStyle = 'rgba(195, 155, 95, 0.35)';
+    ctx.lineWidth = 1.5;
+    for (let i = -512; i < 1024; i += step) {
+      ctx.beginPath();
+      ctx.moveTo(i, 0);
+      ctx.lineTo(i + 512, 512);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(i, 512);
+      ctx.lineTo(i + 512, 0);
+      ctx.stroke();
+    }
+
+    // Stitch dots at crossings
+    ctx.fillStyle = '#caa362';
+    for (let x = 0; x < 512; x += step) {
+      for (let y = 0; y < 512; y += step) {
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Aging vignette & dust
+    const grad = ctx.createRadialGradient(256, 256, 100, 256, 256, 260);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(15, 8, 10, 0.65)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 512, 512);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    this.cache.set('vintage_quilt', texture);
+    return texture;
+  }
+
+  public static createAgedCurtainTexture(): THREE.CanvasTexture {
+    if (this.cache.has('aged_curtain')) return this.cache.get('aged_curtain')!;
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // Heavy dusty colonial velvet folds (vertical gradient stripes)
+    ctx.fillStyle = '#3a161b';
+    ctx.fillRect(0, 0, 256, 512);
+
+    for (let x = 0; x < 256; x += 32) {
+      const foldGrad = ctx.createLinearGradient(x, 0, x + 32, 0);
+      foldGrad.addColorStop(0, 'rgba(18, 6, 8, 0.7)');
+      foldGrad.addColorStop(0.5, 'rgba(92, 38, 45, 0.55)');
+      foldGrad.addColorStop(1, 'rgba(18, 6, 8, 0.7)');
+      ctx.fillStyle = foldGrad;
+      ctx.fillRect(x, 0, 32, 512);
+    }
+
+    // Bottom fringe trim
+    ctx.fillStyle = '#8b6f3b';
+    ctx.fillRect(0, 485, 256, 27);
+    for (let f = 0; f < 256; f += 4) {
+      ctx.strokeStyle = '#5a4622';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(f, 485);
+      ctx.lineTo(f, 512);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    this.cache.set('aged_curtain', texture);
+    return texture;
+  }
+
+  public static createAntiqueMirrorTexture(): THREE.CanvasTexture {
+    if (this.cache.has('antique_mirror')) return this.cache.get('antique_mirror')!;
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+
+    // Cloudy dark silver glass base
+    ctx.fillStyle = '#1c252d';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Soft reflective silver gradient center
+    const refl = ctx.createRadialGradient(256, 256, 40, 256, 256, 240);
+    refl.addColorStop(0, 'rgba(180, 195, 210, 0.35)');
+    refl.addColorStop(0.7, 'rgba(90, 110, 125, 0.20)');
+    refl.addColorStop(1, 'rgba(30, 40, 48, 0.9)');
+    ctx.fillStyle = refl;
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Tarnished oxidization around edges (mercury degradation)
+    for (let i = 0; i < 400; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 180 + Math.random() * 80;
+      const x = 256 + Math.cos(angle) * dist;
+      const y = 256 + Math.sin(angle) * dist;
+      ctx.fillStyle = Math.random() > 0.4 ? 'rgba(25, 20, 16, 0.85)' : 'rgba(55, 45, 35, 0.7)';
+      ctx.beginPath();
+      ctx.arc(x, y, 4 + Math.random() * 14, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Hairline scratches
+    ctx.strokeStyle = 'rgba(180, 195, 205, 0.4)';
+    ctx.lineWidth = 1;
+    for (let c = 0; c < 12; c++) {
+      const sx = Math.random() * 512;
+      const sy = Math.random() * 512;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + (Math.random() - 0.5) * 80, sy + (Math.random() - 0.5) * 80);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    this.cache.set('antique_mirror', texture);
+    return texture;
+  }
 }
 
 /**
@@ -461,6 +653,10 @@ export class BungalowInterior {
   private ceramicPlateMat: THREE.MeshStandardMaterial;
   private burlapMat: THREE.MeshStandardMaterial;
   private copperMat: THREE.MeshStandardMaterial;
+  private agedLinenMat: THREE.MeshStandardMaterial;
+  private vintageQuiltMat: THREE.MeshStandardMaterial;
+  private agedCurtainMat: THREE.MeshStandardMaterial;
+  private antiqueMirrorMat: THREE.MeshStandardMaterial;
 
   constructor(scene: THREE.Scene) {
     this.group = new THREE.Group();
@@ -473,6 +669,34 @@ export class BungalowInterior {
     const carpetTex = BungalowTextureGenerator.createCarpetTexture();
     const woodTex = BungalowTextureGenerator.createWoodTexture();
     const tileTex = BungalowTextureGenerator.createBathroomTileTexture();
+    const linenTex = BungalowTextureGenerator.createAgedLinenBedsheetTexture();
+    const quiltTex = BungalowTextureGenerator.createVintageQuiltTexture();
+    const curtainTex = BungalowTextureGenerator.createAgedCurtainTexture();
+    const mirrorTex = BungalowTextureGenerator.createAntiqueMirrorTexture();
+
+    this.agedLinenMat = new THREE.MeshStandardMaterial({
+      map: linenTex,
+      roughness: 0.88,
+      metalness: 0.02,
+    });
+
+    this.vintageQuiltMat = new THREE.MeshStandardMaterial({
+      map: quiltTex,
+      roughness: 0.84,
+      metalness: 0.04,
+    });
+
+    this.agedCurtainMat = new THREE.MeshStandardMaterial({
+      map: curtainTex,
+      roughness: 0.88,
+      metalness: 0.05,
+    });
+
+    this.antiqueMirrorMat = new THREE.MeshStandardMaterial({
+      map: mirrorTex,
+      roughness: 0.22,
+      metalness: 0.72,
+    });
 
     this.woodFloorMat = new THREE.MeshStandardMaterial({
       map: floorTex,
@@ -1562,111 +1786,731 @@ export class BungalowInterior {
     const ceilY = 9.25;
     const wallH = ceilY - floorY;
 
-    // Second floor upper roof ceiling
+    // Second floor upper roof ceiling (covers entire upper footprint)
     const upperCeil = new THREE.Mesh(new THREE.BoxGeometry(25.0, 0.2, 20.0), this.ceilingMat);
     upperCeil.position.set(0, ceilY + 0.1, -68.5);
     this.group.add(upperCeil);
 
     // Central landing floors
-    const landing = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.2, 10.0), this.upperWoodFloorMat);
-    landing.position.set(0, floorY - 0.1, -64.0);
+    // 1. Front landing / gallery overlooking ground floor foyer (z in [-58.95, -68.5])
+    const landing = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.2, 9.55), this.upperWoodFloorMat);
+    landing.position.set(0, floorY - 0.1, -63.725);
+    landing.receiveShadow = true;
     this.group.add(landing);
 
-    const topPlatform = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.2, 3.2), this.upperWoodFloorMat);
-    topPlatform.position.set(0, floorY - 0.1, -76.8);
+    // 2. Top landing / platform at the top of the grand staircase (z in [-75.5, -78.5])
+    const topPlatform = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.2, 3.0), this.upperWoodFloorMat);
+    topPlatform.position.set(0, floorY - 0.1, -77.0);
+    topPlatform.receiveShadow = true;
     this.group.add(topPlatform);
 
-    // Continuous side gallery floors connecting top platform to front landing along both sides of stair opening
-    const lGalleryFloor = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.2, 6.4), this.upperWoodFloorMat);
+    // 3. Side gallery walkways connecting top platform to front landing along both sides of stairwell
+    const lGalleryFloor = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.2, 7.0), this.upperWoodFloorMat);
     lGalleryFloor.position.set(-2.15, floorY - 0.1, -72.0);
+    lGalleryFloor.receiveShadow = true;
     this.group.add(lGalleryFloor);
 
-    const rGalleryFloor = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.2, 6.4), this.upperWoodFloorMat);
+    const rGalleryFloor = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.2, 7.0), this.upperWoodFloorMat);
     rGalleryFloor.position.set(2.15, floorY - 0.1, -72.0);
+    rGalleryFloor.receiveShadow = true;
     this.group.add(rGalleryFloor);
 
-    // Wing floors (Left & Right master rooms)
-    const lFloor = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.2, 19.5), this.upperWoodFloorMat);
-    lFloor.position.set(-7.75, floorY - 0.1, -68.7);
+    // Wing floors (Left & Right master bedrooms)
+    const lFloor = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.2, 19.55), this.upperWoodFloorMat);
+    lFloor.position.set(-7.75, floorY - 0.1, -68.725);
+    lFloor.receiveShadow = true;
     this.group.add(lFloor);
 
-    const rFloor = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.2, 19.5), this.upperWoodFloorMat);
-    rFloor.position.set(7.75, floorY - 0.1, -68.7);
+    const rFloor = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.2, 19.55), this.upperWoodFloorMat);
+    rFloor.position.set(7.75, floorY - 0.1, -68.725);
+    rFloor.receiveShadow = true;
     this.group.add(rFloor);
 
     // Perimeter walls
     this.createWall(new THREE.Vector3(0, (floorY + ceilY) / 2, -78.5), new THREE.Vector3(25.0, wallH, 0.3), this.wallpaperMat);
-    this.createWall(new THREE.Vector3(-12.5, (floorY + ceilY) / 2, -68.5), new THREE.Vector3(0.3, wallH, 20.0), this.bedroomWallMat);
-    this.createWall(new THREE.Vector3(12.5, (floorY + ceilY) / 2, -68.5), new THREE.Vector3(0.3, wallH, 20.0), this.bedroomWallMat);
+    this.createWall(new THREE.Vector3(-12.5, (floorY + ceilY) / 2, -68.725), new THREE.Vector3(0.3, wallH, 19.55), this.bedroomWallMat);
+    this.createWall(new THREE.Vector3(12.5, (floorY + ceilY) / 2, -68.725), new THREE.Vector3(0.3, wallH, 19.55), this.bedroomWallMat);
     this.createWall(new THREE.Vector3(0, (floorY + ceilY) / 2, -58.95), new THREE.Vector3(25.0, wallH, 0.3), this.wallpaperMat);
 
-    // Hallway dividing walls with generous openings into Master Bedroom and Yamini's Room
+    // Dividing walls separating Central Landing from the two Master Bedrooms:
     // Left hallway wall (x = -3.0):
-    // Doorway 1 (into Master Bedroom from landing): z in [-64.5, -66.5] (clear 2.0m opening)
-    this.createWall(new THREE.Vector3(-3.0, (floorY + ceilY) / 2, -61.725), new THREE.Vector3(0.25, wallH, 5.55), this.bedroomWallMat);
-    this.createWall(new THREE.Vector3(-3.0, ceilY - 0.5, -65.5), new THREE.Vector3(0.25, 1.0, 2.0), this.bedroomWallMat, false);
-    // Doorway 2 (into Master Bedroom from upper gallery / top landing): z in [-74.6, -76.6] (clear 2.0m opening)
-    this.createWall(new THREE.Vector3(-3.0, (floorY + ceilY) / 2, -70.55), new THREE.Vector3(0.25, wallH, 8.10), this.bedroomWallMat);
-    this.createWall(new THREE.Vector3(-3.0, ceilY - 0.5, -75.6), new THREE.Vector3(0.25, 1.0, 2.0), this.bedroomWallMat, false);
-    this.createWall(new THREE.Vector3(-3.0, (floorY + ceilY) / 2, -77.55), new THREE.Vector3(0.25, wallH, 1.90), this.bedroomWallMat);
+    // Continuous solid wall from front up to doorway entrance at z = -74.9
+    this.createWall(new THREE.Vector3(-3.0, (floorY + ceilY) / 2, -66.925), new THREE.Vector3(0.25, wallH, 15.95), this.bedroomWallMat);
+    // Wall lintel above the 1.8m doorway opening (z in [-74.9, -76.7], leaves clear 2.75m vertical opening)
+    this.createWall(new THREE.Vector3(-3.0, ceilY - 0.525, -75.8), new THREE.Vector3(0.25, 1.05, 1.8), this.bedroomWallMat, false);
+    // Wall segment behind doorway from z = -76.7 to back perimeter wall z = -78.5
+    this.createWall(new THREE.Vector3(-3.0, (floorY + ceilY) / 2, -77.6), new THREE.Vector3(0.25, wallH, 1.8), this.bedroomWallMat);
 
-    // Right hallway wall (x = 3.0):
-    // Doorway 1 (into Yamini's Room from landing): z in [-64.5, -66.5] (clear 2.0m opening)
-    this.createWall(new THREE.Vector3(3.0, (floorY + ceilY) / 2, -61.725), new THREE.Vector3(0.25, wallH, 5.55), this.bedroomWallMat);
-    this.createWall(new THREE.Vector3(3.0, ceilY - 0.5, -65.5), new THREE.Vector3(0.25, 1.0, 2.0), this.bedroomWallMat, false);
-    // Doorway 2 (into Yamini's Room from upper gallery / top landing): z in [-74.6, -76.6] (clear 2.0m opening)
-    this.createWall(new THREE.Vector3(3.0, (floorY + ceilY) / 2, -70.55), new THREE.Vector3(0.25, wallH, 8.10), this.bedroomWallMat);
-    this.createWall(new THREE.Vector3(3.0, ceilY - 0.5, -75.6), new THREE.Vector3(0.25, 1.0, 2.0), this.bedroomWallMat, false);
-    this.createWall(new THREE.Vector3(3.0, (floorY + ceilY) / 2, -77.55), new THREE.Vector3(0.25, wallH, 1.90), this.bedroomWallMat);
+    // Right hallway wall (x = +3.0):
+    // Continuous solid wall from front up to doorway entrance at z = -74.9
+    this.createWall(new THREE.Vector3(3.0, (floorY + ceilY) / 2, -66.925), new THREE.Vector3(0.25, wallH, 15.95), this.bedroomWallMat);
+    // Wall lintel above the 1.8m doorway opening
+    this.createWall(new THREE.Vector3(3.0, ceilY - 0.525, -75.8), new THREE.Vector3(0.25, 1.05, 1.8), this.bedroomWallMat, false);
+    // Wall segment behind doorway from z = -76.7 to back perimeter wall z = -78.5
+    this.createWall(new THREE.Vector3(3.0, (floorY + ceilY) / 2, -77.6), new THREE.Vector3(0.25, wallH, 1.8), this.bedroomWallMat);
 
-    // Decorative doorway frames
-    this.createDoorwayFrame(new THREE.Vector3(-3.0, floorY, -65.5), 2.0, wallH - 1.0);
-    this.createDoorwayFrame(new THREE.Vector3(-3.0, floorY, -75.6), 2.0, wallH - 1.0);
-    this.createDoorwayFrame(new THREE.Vector3(3.0, floorY, -65.5), 2.0, wallH - 1.0);
-    this.createDoorwayFrame(new THREE.Vector3(3.0, floorY, -75.6), 2.0, wallH - 1.0);
+    // Dedicated Entrance Doors for each Master Bedroom (one door each, properly aligned)
+    this.createBedroomDoor(new THREE.Vector3(-3.0, floorY, -75.8), 'left');
+    this.createBedroomDoor(new THREE.Vector3(3.0, floorY, -75.8), 'right');
 
-    // Balustrades around stair opening
+    // Balustrades around the stairwell opening (open at top of stairs z = -75.5)
     this.createBalustrade(new THREE.Vector3(-1.3, floorY + 0.5, -68.5), new THREE.Vector3(1.3, floorY + 0.5, -68.5));
     this.createBalustrade(new THREE.Vector3(-1.3, floorY + 0.5, -68.5), new THREE.Vector3(-1.3, floorY + 0.5, -75.5));
     this.createBalustrade(new THREE.Vector3(1.3, floorY + 0.5, -68.5), new THREE.Vector3(1.3, floorY + 0.5, -75.5));
 
+    // Central Landing atmosphere and architectural decor
+    this.setupCentralLandingFeatures(floorY);
+
+    // Populate Left & Right Master Bedrooms
     this.populateSecondFloorLeft_MasterBedroom(floorY);
-    this.populateSecondFloorRight_YaminiRoom(floorY);
+    this.populateSecondFloorRight_MasterBedroom(floorY);
+  }
+
+  private createBedroomDoor(pos: THREE.Vector3, side: 'left' | 'right'): void {
+    // Door posts on left and right sides of the 1.8m opening
+    const postGeo = new THREE.BoxGeometry(0.28, 2.75, 0.12);
+    const postL = new THREE.Mesh(postGeo, this.darkTeakMat);
+    postL.position.set(pos.x, pos.y + 1.375, pos.z - 0.9);
+    this.group.add(postL);
+
+    const postR = new THREE.Mesh(postGeo, this.darkTeakMat);
+    postR.position.set(pos.x, pos.y + 1.375, pos.z + 0.9);
+    this.group.add(postR);
+
+    // Top decorative header lintel
+    const headerGeo = new THREE.BoxGeometry(0.30, 0.14, 2.04);
+    const header = new THREE.Mesh(headerGeo, this.darkTeakMat);
+    header.position.set(pos.x, pos.y + 2.75 - 0.07, pos.z);
+    this.group.add(header);
+
+    // Molded architrave crown trim
+    const crownGeo = new THREE.BoxGeometry(0.34, 0.08, 2.14);
+    const crown = new THREE.Mesh(crownGeo, this.darkTeakMat);
+    crown.position.set(pos.x, pos.y + 2.79, pos.z);
+    this.group.add(crown);
+
+    // Vintage colonial 4-panel wooden door leaf swung open flat against the inside bedroom wall
+    // Positioned inside the room resting flush along the dividing wall so doorway is 100% clear
+    const doorLeafGeo = new THREE.BoxGeometry(0.06, 2.65, 0.88);
+    const doorLeaf = new THREE.Mesh(doorLeafGeo, this.darkTeakMat);
+    const doorX = side === 'left' ? pos.x - 0.16 : pos.x + 0.16;
+    doorLeaf.position.set(doorX, pos.y + 1.325, pos.z - 0.44);
+    this.group.add(doorLeaf);
+
+    // 4 molded recessed door panels
+    const panelGeo = new THREE.BoxGeometry(0.075, 0.52, 0.32);
+    const offsetsZ = [-0.22, 0.22];
+    const offsetsY = [pos.y + 0.75, pos.y + 1.75];
+    for (const py of offsetsY) {
+      for (const pz of offsetsZ) {
+        const pMesh = new THREE.Mesh(panelGeo, this.darkTeakMat);
+        pMesh.position.set(doorX, py, pos.z - 0.44 + pz);
+        this.group.add(pMesh);
+      }
+    }
+
+    // Antique brass doorknob & escutcheon plate
+    const knobGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.09, 8);
+    const knob = new THREE.Mesh(knobGeo, this.brassMat);
+    knob.rotation.z = Math.PI / 2;
+    knob.position.set(doorX, pos.y + 1.25, pos.z - 0.44 + 0.35);
+    this.group.add(knob);
+  }
+
+  private setupCentralLandingFeatures(floorY: number): void {
+    // Back wall feature: Antique stained-glass transom window letting in moonlight
+    const windowFrame = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.4, 0.08), this.darkTeakMat);
+    windowFrame.position.set(0, floorY + 2.5, -78.4);
+    this.group.add(windowFrame);
+
+    const windowGlass = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.2, 1.2),
+      new THREE.MeshStandardMaterial({
+        color: 0x5a7088,
+        roughness: 0.15,
+        metalness: 0.85,
+        transparent: true,
+        opacity: 0.65,
+      })
+    );
+    windowGlass.position.set(0, floorY + 2.5, -78.35);
+    this.group.add(windowGlass);
+
+    // Vintage hall settee / bench resting against the back landing wall
+    const benchGroup = new THREE.Group();
+    const benchSeat = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.08, 0.48), this.darkTeakMat);
+    benchSeat.position.set(0, 0.45, 0);
+    benchGroup.add(benchSeat);
+
+    const benchBack = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.55, 0.06), this.darkTeakMat);
+    benchBack.position.set(0, 0.72, -0.21);
+    benchGroup.add(benchBack);
+
+    // Bench legs
+    const legGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.45, 8);
+    const bOffsets: [number, number][] = [[-0.82, -0.18], [0.82, -0.18], [-0.82, 0.18], [0.82, 0.18]];
+    for (const [bx, bz] of bOffsets) {
+      const leg = new THREE.Mesh(legGeo, this.darkTeakMat);
+      leg.position.set(bx, 0.225, bz);
+      benchGroup.add(leg);
+    }
+    benchGroup.position.set(0, floorY, -78.1);
+    this.group.add(benchGroup);
+    this.addBoxCollider(new THREE.Vector3(0, floorY + 0.45, -78.1), new THREE.Vector3(1.9, 0.9, 0.5));
+
+    // Vintage wall sconce lantern on the back wall
+    const sconceLamp = new THREE.PointLight(0xf5a242, 1.4, 9.0, 1.8);
+    sconceLamp.position.set(0, floorY + 2.2, -78.1);
+    this.group.add(sconceLamp);
+    this.flickeringLamps.push(sconceLamp);
+
+    // Front landing overlook: Antique carved console table with candelabra
+    const consoleTable = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.78, 0.42), this.darkTeakMat);
+    consoleTable.position.set(0, floorY + 0.39, -59.3);
+    this.group.add(consoleTable);
+    this.addBoxCollider(consoleTable.position, new THREE.Vector3(1.5, 0.85, 0.45));
+
+    // Brass candelabra on console table
+    const candelabra = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.1, 0.35, 8), this.brassMat);
+    candelabra.position.set(0, floorY + 0.78 + 0.175, -59.3);
+    this.group.add(candelabra);
+
+    // Hanging pendant lantern above front landing
+    const frontPendant = new THREE.PointLight(0xffbe6b, 1.5, 10.0, 1.8);
+    frontPendant.position.set(0, floorY + 2.8, -63.5);
+    this.group.add(frontPendant);
+    this.flickeringLamps.push(frontPendant);
+  }
+
+  private createOldCurtains(pos: THREE.Vector3, width: number, height: number, facingX = false): void {
+    const rodGeo = new THREE.CylinderGeometry(0.02, 0.02, width, 8);
+    const rod = new THREE.Mesh(rodGeo, this.brassMat);
+    rod.position.set(pos.x, pos.y + height / 2 + 0.05, pos.z);
+    if (!facingX) rod.rotation.z = Math.PI / 2;
+    else rod.rotation.x = Math.PI / 2;
+    this.group.add(rod);
+
+    // Left drape
+    const drapeGeo = new THREE.BoxGeometry(facingX ? 0.08 : width * 0.32, height, facingX ? width * 0.32 : 0.08);
+    const drapeL = new THREE.Mesh(drapeGeo, this.agedCurtainMat);
+    drapeL.position.set(
+      facingX ? pos.x : pos.x - width * 0.34,
+      pos.y,
+      facingX ? pos.z - width * 0.34 : pos.z
+    );
+    this.group.add(drapeL);
+
+    // Right drape
+    const drapeR = new THREE.Mesh(drapeGeo, this.agedCurtainMat);
+    drapeR.position.set(
+      facingX ? pos.x : pos.x + width * 0.34,
+      pos.y,
+      facingX ? pos.z + width * 0.34 : pos.z
+    );
+    this.group.add(drapeR);
   }
 
   private populateSecondFloorLeft_MasterBedroom(floorY: number): void {
-    const rz = -68.5;
-    // Grand four-poster bed
-    const bed = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.45, 2.6), this.oldFabricMat);
-    bed.position.set(-10.8, floorY + 0.45, rz);
-    this.group.add(bed);
-    this.addBoxCollider(bed.position, new THREE.Vector3(2.6, 1.2, 2.8));
+    // =========================================================================
+    // LEFT SIDE — LARGE MASTER BEDROOM
+    // Dimensions: X in [-12.35, -3.0], Z in [-78.35, -58.95]
+    // =========================================================================
 
-    // Wardrobe
-    const wardrobe = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.8, 0.7), this.darkTeakMat);
-    wardrobe.position.set(-7.5, floorY + 1.4, -59.5);
+    // -------------------------------------------------------------------------
+    // FOCAL OBJECT: ONE LARGE BED
+    // Large old wooden frame, thick old mattress, aged bedsheet, pillows
+    // Headboard against the outer left wall (x = -11.4), centered at z = -68.0
+    // -------------------------------------------------------------------------
+    const bedGroup = new THREE.Group();
+    bedGroup.position.set(0, floorY, 0);
+
+    // 1. Turned wooden corner legs/posts
+    const legGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.45, 10);
+    const bedLegCoords: [number, number][] = [
+      [-11.35, -66.95],
+      [-11.35, -69.05],
+      [-8.95, -66.95],
+      [-8.95, -69.05],
+    ];
+    for (const [lx, lz] of bedLegCoords) {
+      const leg = new THREE.Mesh(legGeo, this.darkTeakMat);
+      leg.position.set(lx, 0.225, lz);
+      bedGroup.add(leg);
+    }
+
+    // 2. Heavy Carved Wooden Headboard (against x = -11.4, facing room interior)
+    const headboard = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.85, 2.26), this.darkTeakMat);
+    headboard.position.set(-11.38, 0.925, -68.0);
+    bedGroup.add(headboard);
+
+    // Ornate carved headboard crest molding
+    const hCrest = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 2.32), this.darkTeakMat);
+    hCrest.position.set(-11.38, 1.88, -68.0);
+    bedGroup.add(hCrest);
+
+    // Headboard carved finials
+    const finialGeo = new THREE.CylinderGeometry(0.04, 0.06, 0.18, 8);
+    const finialL = new THREE.Mesh(finialGeo, this.darkTeakMat);
+    finialL.position.set(-11.38, 1.96, -66.95);
+    bedGroup.add(finialL);
+    const finialR = new THREE.Mesh(finialGeo, this.darkTeakMat);
+    finialR.position.set(-11.38, 1.96, -69.05);
+    bedGroup.add(finialR);
+
+    // 3. Carved Footboard (at foot of bed x = -8.9)
+    const footboard = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.82, 2.26), this.darkTeakMat);
+    footboard.position.set(-8.92, 0.41, -68.0);
+    bedGroup.add(footboard);
+
+    const fCrest = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 2.30), this.darkTeakMat);
+    fCrest.position.set(-8.92, 0.84, -68.0);
+    bedGroup.add(fCrest);
+
+    // 4. Sturdy Side Rails & Base Slats
+    const railGeo = new THREE.BoxGeometry(2.36, 0.18, 0.08);
+    const railNorth = new THREE.Mesh(railGeo, this.darkTeakMat);
+    railNorth.position.set(-10.15, 0.38, -66.95);
+    bedGroup.add(railNorth);
+
+    const railSouth = new THREE.Mesh(railGeo, this.darkTeakMat);
+    railSouth.position.set(-10.15, 0.38, -69.05);
+    bedGroup.add(railSouth);
+
+    // Mattress support base slats
+    const slatBase = new THREE.Mesh(new THREE.BoxGeometry(2.32, 0.06, 2.02), this.darkTeakMat);
+    slatBase.position.set(-10.15, 0.36, -68.0);
+    bedGroup.add(slatBase);
+
+    // 5. Thick Old Mattress (aged ticking fabric, realistic generous thickness)
+    const mattress = new THREE.Mesh(new THREE.BoxGeometry(2.34, 0.30, 2.04), this.agedLinenMat);
+    mattress.position.set(-10.15, 0.53, -68.0);
+    mattress.receiveShadow = true;
+    bedGroup.add(mattress);
+
+    // 6. Aged Bedsheet & Draped Counterpane (aged linen with rumpled folds)
+    const bedspread = new THREE.Mesh(new THREE.BoxGeometry(2.36, 0.08, 2.06), this.agedLinenMat);
+    bedspread.position.set(-10.15, 0.69, -68.0);
+    bedspread.receiveShadow = true;
+    bedGroup.add(bedspread);
+
+    // Draped counterpane overhang along the footboard
+    const drapeFoot = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.22, 1.94), this.agedLinenMat);
+    drapeFoot.position.set(-8.98, 0.56, -68.0);
+    bedGroup.add(drapeFoot);
+
+    // 7. Two Plush Pillows propped naturally against the headboard + Bolster
+    const pillowGeo = new THREE.BoxGeometry(0.48, 0.18, 0.75);
+    const pillowNorth = new THREE.Mesh(pillowGeo, this.agedLinenMat);
+    pillowNorth.position.set(-11.0, 0.80, -67.45);
+    pillowNorth.rotation.z = -0.22;
+    bedGroup.add(pillowNorth);
+
+    const pillowSouth = new THREE.Mesh(pillowGeo, this.agedLinenMat);
+    pillowSouth.position.set(-11.0, 0.80, -68.55);
+    pillowSouth.rotation.z = -0.22;
+    bedGroup.add(pillowSouth);
+
+    // Decorative antique bolster pillow
+    const bolsterGeo = new THREE.CylinderGeometry(0.10, 0.10, 1.4, 12);
+    const bolster = new THREE.Mesh(bolsterGeo, this.agedLinenMat);
+    bolster.rotation.x = Math.PI / 2;
+    bolster.position.set(-10.45, 0.74, -68.0);
+    bedGroup.add(bolster);
+
+    this.group.add(bedGroup);
+
+    // Bed physical collider: tight, accurate bounds allowing comfortable walking space on all sides
+    this.addBoxCollider(
+      new THREE.Vector3(-10.15, floorY + 0.6, -68.0),
+      new THREE.Vector3(2.5, 1.2, 2.3)
+    );
+
+    // -------------------------------------------------------------------------
+    // BEDSIDE TABLES & OLD LAMPS
+    // -------------------------------------------------------------------------
+    // Bedside Table 1 (North of headboard: x = -11.1, z = -65.5)
+    const stand1 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.64, 0.55), this.darkTeakMat);
+    stand1.position.set(-11.1, floorY + 0.32, -65.5);
+    this.group.add(stand1);
+    this.addBoxCollider(stand1.position, new THREE.Vector3(0.65, 0.75, 0.65));
+
+    // Vintage brass kerosene lamp on Table 1
+    const lamp1Base = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.18, 8), this.brassMat);
+    lamp1Base.position.set(-11.1, floorY + 0.64 + 0.09, -65.5);
+    this.group.add(lamp1Base);
+
+    const lamp1Glass = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.22, 8), this.dustyGlassMat);
+    lamp1Glass.position.set(-11.1, floorY + 0.64 + 0.28, -65.5);
+    this.group.add(lamp1Glass);
+
+    const bedLampLight1 = new THREE.PointLight(0xeda358, 1.4, 8.5, 1.8);
+    bedLampLight1.position.set(-11.1, floorY + 0.95, -65.5);
+    this.group.add(bedLampLight1);
+    this.flickeringLamps.push(bedLampLight1);
+
+    // Bedside Table 2 (South of headboard: x = -11.1, z = -70.5)
+    const stand2 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.64, 0.55), this.darkTeakMat);
+    stand2.position.set(-11.1, floorY + 0.32, -70.5);
+    this.group.add(stand2);
+    this.addBoxCollider(stand2.position, new THREE.Vector3(0.65, 0.75, 0.65));
+
+    // Pewter candlestick & candle on Table 2
+    const candleBase = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 0.12, 8), this.brassMat);
+    candleBase.position.set(-11.1, floorY + 0.64 + 0.06, -70.5);
+    this.group.add(candleBase);
+
+    const candleWax = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.02, 0.14, 8), this.paperMat);
+    candleWax.position.set(-11.1, floorY + 0.64 + 0.18, -70.5);
+    this.group.add(candleWax);
+
+    // -------------------------------------------------------------------------
+    // OLD WOODEN WARDROBE (ALMIRAH)
+    // Placed against back wall at x = -7.5, z = -77.8
+    // -------------------------------------------------------------------------
+    const wardrobe = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.7, 0.72), this.darkTeakMat);
+    wardrobe.position.set(-7.5, floorY + 1.35, -77.8);
+    wardrobe.castShadow = true;
     this.group.add(wardrobe);
-    this.addBoxCollider(wardrobe.position, new THREE.Vector3(2.0, 2.9, 0.9));
+    this.addBoxCollider(wardrobe.position, new THREE.Vector3(2.25, 2.75, 0.75));
+
+    // Wardrobe crown pediment
+    const wCrest = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.12, 0.78), this.darkTeakMat);
+    wCrest.position.set(-7.5, floorY + 2.72, -77.8);
+    this.group.add(wCrest);
+
+    // Wardrobe brass handles
+    const wHandleGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.12, 8);
+    const wHandleL = new THREE.Mesh(wHandleGeo, this.brassMat);
+    wHandleL.position.set(-7.6, floorY + 1.35, -77.42);
+    this.group.add(wHandleL);
+    const wHandleR = new THREE.Mesh(wHandleGeo, this.brassMat);
+    wHandleR.position.set(-7.4, floorY + 1.35, -77.42);
+    this.group.add(wHandleR);
+
+    // -------------------------------------------------------------------------
+    // OLD DRESSING TABLE & OLD MIRROR
+    // Placed against outer left wall at x = -11.5, z = -62.5
+    // -------------------------------------------------------------------------
+    const vanityTable = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.76, 1.5), this.darkTeakMat);
+    vanityTable.position.set(-11.5, floorY + 0.38, -62.5);
+    vanityTable.castShadow = true;
+    this.group.add(vanityTable);
+    this.addBoxCollider(vanityTable.position, new THREE.Vector3(0.75, 1.85, 1.6));
+
+    // Vanity Mirror Frame (arched top)
+    const vMirrorFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.15, 0.95), this.darkTeakMat);
+    vMirrorFrame.position.set(-11.75, floorY + 1.35, -62.5);
+    this.group.add(vMirrorFrame);
+
+    // Cloudy antique mirror glass pane
+    const vMirrorGlass = new THREE.Mesh(new THREE.BoxGeometry(0.02, 1.05, 0.85), this.antiqueMirrorMat);
+    vMirrorGlass.position.set(-11.71, floorY + 1.35, -62.5);
+    this.group.add(vMirrorGlass);
+
+    // Personal objects on dressing table: silver hairbrush, perfume bottle
+    const hairbrush = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.03, 0.22), this.brassMat);
+    hairbrush.position.set(-11.45, floorY + 0.775, -62.25);
+    hairbrush.rotation.y = 0.4;
+    this.group.add(hairbrush);
+
+    const perfumeBottle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.12, 8), this.dustyGlassMat);
+    perfumeBottle.position.set(-11.45, floorY + 0.82, -62.7);
+    this.group.add(perfumeBottle);
+
+    // Story Clue document on vanity: Father's Estate Will & Sankar's Letter
+    const willDoc = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.02, 0.32), this.paperMat);
+    willDoc.position.set(-11.45, floorY + 0.77, -62.5);
+    willDoc.rotation.y = -0.15;
+    this.group.add(willDoc);
+
+    // -------------------------------------------------------------------------
+    // SMALL OLD CHAIR
+    // Placed in front of dressing table at x = -10.4, z = -62.5
+    // -------------------------------------------------------------------------
+    const chairGroup = this.createChairGroup(new THREE.Vector3(-10.4, floorY, -62.5), Math.PI / 2 + 0.2);
+    this.group.add(chairGroup);
+
+    // -------------------------------------------------------------------------
+    // OLD CURTAINS (Heavy velvet draperies on exterior windows)
+    // -------------------------------------------------------------------------
+    this.createOldCurtains(new THREE.Vector3(-12.35, floorY + 1.8, -63.5), 1.8, 2.2, true);
+    this.createOldCurtains(new THREE.Vector3(-12.35, floorY + 1.8, -73.0), 1.8, 2.2, true);
+
+    // -------------------------------------------------------------------------
+    // ABANDONED PERSONAL OBJECTS & ROOM RUNNER
+    // -------------------------------------------------------------------------
+    // Old leather travel valise / trunk near wardrobe
+    const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.45, 0.55), this.cardboardMat);
+    trunk.position.set(-9.2, floorY + 0.225, -77.5);
+    trunk.rotation.y = 0.15;
+    this.group.add(trunk);
+    this.addBoxCollider(trunk.position, new THREE.Vector3(0.9, 0.5, 0.6));
+
+    // Worn patterned bedside rug
+    const runner = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 3.6), this.wornCarpetMat);
+    runner.rotation.x = -Math.PI / 2;
+    runner.position.set(-8.5, floorY + 0.01, -68.0);
+    this.group.add(runner);
+
+    // Subtle warm ambient sconce in Left Bedroom
+    const leftAmbSconce = new THREE.PointLight(0xe5a362, 1.3, 11.0, 1.8);
+    leftAmbSconce.position.set(-7.5, floorY + 2.4, -68.0);
+    this.group.add(leftAmbSconce);
+    this.flickeringLamps.push(leftAmbSconce);
   }
 
-  private populateSecondFloorRight_YaminiRoom(floorY: number): void {
-    // Abandoned wrought iron bed
-    const bed = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.4, 2.2), this.oldFabricMat);
-    bed.position.set(11.2, floorY + 0.35, -74.5);
-    this.group.add(bed);
-    this.addBoxCollider(bed.position, new THREE.Vector3(1.6, 0.9, 2.4));
+  private populateSecondFloorRight_MasterBedroom(floorY: number): void {
+    // =========================================================================
+    // RIGHT SIDE — LARGE MASTER BEDROOM (Distinct Layout & Colonial Four-Poster Bed)
+    // Dimensions: X in [+3.0, +12.35], Z in [-78.35, -58.95]
+    // =========================================================================
 
-    // Rocking chair
+    // -------------------------------------------------------------------------
+    // FOCAL OBJECT: ONE LARGE BED (Colonial Four-Poster Canopy Bed)
+    // Distinct design from Left Bedroom: 4 tall carved wooden pillars, canopy rails,
+    // headboard against back wall at z = -77.6, centered at x = +8.2
+    // -------------------------------------------------------------------------
+    const bedGroup = new THREE.Group();
+    bedGroup.position.set(0, floorY, 0);
+
+    // 1. Four Tall Turned Teak Posts (Canopy Height: 2.80m)
+    const postGeo = new THREE.CylinderGeometry(0.045, 0.055, 2.80, 10);
+    const postCoords: [number, number][] = [
+      [7.15, -77.55],
+      [9.25, -77.55],
+      [7.15, -75.15],
+      [9.25, -75.15],
+    ];
+    for (const [px, pz] of postCoords) {
+      const post = new THREE.Mesh(postGeo, this.darkTeakMat);
+      post.position.set(px, 1.40, pz);
+      bedGroup.add(post);
+
+      // Post top finials
+      const fGeo = new THREE.CylinderGeometry(0.02, 0.055, 0.16, 8);
+      const finial = new THREE.Mesh(fGeo, this.darkTeakMat);
+      finial.position.set(px, 2.88, pz);
+      bedGroup.add(finial);
+    }
+
+    // 2. Top Canopy Rails connecting all 4 posts
+    const canopyRailX = new THREE.Mesh(new THREE.BoxGeometry(2.14, 0.06, 0.06), this.darkTeakMat);
+    canopyRailX.position.set(8.2, 2.77, -77.55);
+    bedGroup.add(canopyRailX);
+    const canopyRailXFront = new THREE.Mesh(new THREE.BoxGeometry(2.14, 0.06, 0.06), this.darkTeakMat);
+    canopyRailXFront.position.set(8.2, 2.77, -75.15);
+    bedGroup.add(canopyRailXFront);
+
+    const canopyRailZLeft = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 2.44), this.darkTeakMat);
+    canopyRailZLeft.position.set(7.15, 2.77, -76.35);
+    bedGroup.add(canopyRailZLeft);
+    const canopyRailZRight = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 2.44), this.darkTeakMat);
+    canopyRailZRight.position.set(9.25, 2.77, -76.35);
+    bedGroup.add(canopyRailZRight);
+
+    // 3. Ornate Carved Wooden Headboard (between back posts)
+    const headboard = new THREE.Mesh(new THREE.BoxGeometry(2.08, 1.55, 0.10), this.darkTeakMat);
+    headboard.position.set(8.2, 0.85, -77.55);
+    bedGroup.add(headboard);
+
+    // Headboard floral crest
+    const hCrest = new THREE.Mesh(new THREE.BoxGeometry(2.14, 0.12, 0.12), this.darkTeakMat);
+    hCrest.position.set(8.2, 1.65, -77.55);
+    bedGroup.add(hCrest);
+
+    // 4. Turned Footboard Rail (between front posts)
+    const footRail = new THREE.Mesh(new THREE.BoxGeometry(2.08, 0.14, 0.08), this.darkTeakMat);
+    footRail.position.set(8.2, 0.82, -75.15);
+    bedGroup.add(footRail);
+
+    // 5. Heavy Side Rails & Base Slats
+    const railZLeft = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 2.38), this.darkTeakMat);
+    railZLeft.position.set(7.15, 0.38, -76.35);
+    bedGroup.add(railZLeft);
+
+    const railZRight = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 2.38), this.darkTeakMat);
+    railZRight.position.set(9.25, 0.38, -76.35);
+    bedGroup.add(railZRight);
+
+    const baseSlat = new THREE.Mesh(new THREE.BoxGeometry(2.02, 0.06, 2.36), this.darkTeakMat);
+    baseSlat.position.set(8.2, 0.36, -76.35);
+    bedGroup.add(baseSlat);
+
+    // 6. Thick Old Mattress (realistic tufted mattress)
+    const mattress = new THREE.Mesh(new THREE.BoxGeometry(2.04, 0.30, 2.36), this.vintageQuiltMat);
+    mattress.position.set(8.2, 0.53, -76.35);
+    mattress.receiveShadow = true;
+    bedGroup.add(mattress);
+
+    // 7. Aged Bedsheet & Faded Quilted Counterpane
+    const bedspread = new THREE.Mesh(new THREE.BoxGeometry(2.06, 0.08, 2.38), this.vintageQuiltMat);
+    bedspread.position.set(8.2, 0.69, -76.35);
+    bedspread.receiveShadow = true;
+    bedGroup.add(bedspread);
+
+    // Draped quilt overhang at foot of bed
+    const drapeFoot = new THREE.Mesh(new THREE.BoxGeometry(1.94, 0.22, 0.10), this.vintageQuiltMat);
+    drapeFoot.position.set(8.2, 0.56, -75.12);
+    bedGroup.add(drapeFoot);
+
+    // 8. Three Plush Pillows (distinct arrangement from left room)
+    const pillowGeo = new THREE.BoxGeometry(0.72, 0.18, 0.46);
+    const pLeft = new THREE.Mesh(pillowGeo, this.agedLinenMat);
+    pLeft.position.set(7.65, 0.80, -77.0);
+    pLeft.rotation.x = 0.22;
+    bedGroup.add(pLeft);
+
+    const pRight = new THREE.Mesh(pillowGeo, this.agedLinenMat);
+    pRight.position.set(8.75, 0.80, -77.0);
+    pRight.rotation.x = 0.22;
+    bedGroup.add(pRight);
+
+    // Center decorative pillow
+    const pCenter = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.16, 0.40), this.agedLinenMat);
+    pCenter.position.set(8.2, 0.74, -76.45);
+    pCenter.rotation.y = 0.15;
+    bedGroup.add(pCenter);
+
+    this.group.add(bedGroup);
+
+    // Bed physical collider: tight, accurate bounds allowing complete walking space on all sides
+    this.addBoxCollider(
+      new THREE.Vector3(8.2, floorY + 0.6, -76.35),
+      new THREE.Vector3(2.3, 1.2, 2.5)
+    );
+
+    // -------------------------------------------------------------------------
+    // BEDSIDE TABLES & OLD LAMPS
+    // -------------------------------------------------------------------------
+    // Bedside Table 1 (Left of bed: x = 5.9, z = -77.4)
+    const stand1 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.64, 0.55), this.darkTeakMat);
+    stand1.position.set(5.9, floorY + 0.32, -77.4);
+    this.group.add(stand1);
+    this.addBoxCollider(stand1.position, new THREE.Vector3(0.65, 0.75, 0.65));
+
+    // Vintage brass kerosene lamp on Table 1
+    const lampGeo = new THREE.CylinderGeometry(0.06, 0.08, 0.16, 8);
+    const lampBase = new THREE.Mesh(lampGeo, this.brassMat);
+    lampBase.position.set(5.9, floorY + 0.64 + 0.08, -77.4);
+    this.group.add(lampBase);
+
+    const bedLampLightR = new THREE.PointLight(0xf59a45, 1.5, 9.0, 1.8);
+    bedLampLightR.position.set(5.9, floorY + 0.95, -77.4);
+    this.group.add(bedLampLightR);
+    this.flickeringLamps.push(bedLampLightR);
+
+    // Bedside Table 2 (Right of bed: x = 10.5, z = -77.4)
+    const stand2 = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.64, 0.55), this.darkTeakMat);
+    stand2.position.set(10.5, floorY + 0.32, -77.4);
+    this.group.add(stand2);
+    this.addBoxCollider(stand2.position, new THREE.Vector3(0.65, 0.75, 0.65));
+
+    const candleBaseR = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 0.12, 8), this.brassMat);
+    candleBaseR.position.set(10.5, floorY + 0.64 + 0.06, -77.4);
+    this.group.add(candleBaseR);
+
+    // Dedicated Nightstand with Yamini's Antique Music Box at (11.8, floorY, -72.0)
+    const musicStand = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.65, 0.55), this.darkTeakMat);
+    musicStand.position.set(11.8, floorY + 0.325, -72.0);
+    this.group.add(musicStand);
+    this.addBoxCollider(musicStand.position, new THREE.Vector3(0.7, 0.8, 0.7));
+
+    // Antique Brass Music Box on nightstand (CLUE_UPPER_MUSIC_BOX)
+    const mbox = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.14, 0.18), this.brassMat);
+    mbox.position.set(11.8, floorY + 0.72, -72.0);
+    this.group.add(mbox);
+
+    // -------------------------------------------------------------------------
+    // LARGE OLD WARDROBE (Three-door armoire with cracked open door)
+    // Placed against front wall at x = 8.0, z = -59.5
+    // -------------------------------------------------------------------------
+    const wardrobeR = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.75, 0.72), this.darkTeakMat);
+    wardrobeR.position.set(8.0, floorY + 1.38, -59.5);
+    wardrobeR.castShadow = true;
+    this.group.add(wardrobeR);
+    this.addBoxCollider(wardrobeR.position, new THREE.Vector3(2.45, 2.8, 0.75));
+
+    // Wardrobe crown pediment
+    const wCrestR = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.14, 0.78), this.darkTeakMat);
+    wCrestR.position.set(8.0, floorY + 2.78, -59.5);
+    this.group.add(wCrestR);
+
+    // Center door slightly ajar
+    const ajarDoor = new THREE.Mesh(new THREE.BoxGeometry(0.75, 2.45, 0.04), this.darkTeakMat);
+    ajarDoor.position.set(8.0, floorY + 1.35, -59.84);
+    ajarDoor.rotation.y = -0.18;
+    this.group.add(ajarDoor);
+
+    // -------------------------------------------------------------------------
+    // OLD DRESSING TABLE & TRIPTYCH MIRROR
+    // Placed at x = 11.4, z = -67.5 (preserves CLUE_UPPER_BEDROOM_DIARY location)
+    // -------------------------------------------------------------------------
+    const desk = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.76, 1.6), this.darkTeakMat);
+    desk.position.set(11.4, floorY + 0.38, -67.5);
+    desk.castShadow = true;
+    this.group.add(desk);
+    this.addBoxCollider(desk.position, new THREE.Vector3(1.0, 1.85, 1.7));
+
+    // Three-panel folding vanity mirror (Triptych Mirror)
+    // Center mirror against outer wall
+    const tripCenter = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.0, 0.8), this.antiqueMirrorMat);
+    tripCenter.position.set(11.75, floorY + 1.35, -67.5);
+    this.group.add(tripCenter);
+
+    // Left folding wing mirror
+    const tripLeft = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.9, 0.36), this.antiqueMirrorMat);
+    tripLeft.position.set(11.68, floorY + 1.35, -67.1);
+    tripLeft.rotation.y = 0.35;
+    this.group.add(tripLeft);
+
+    // Right folding wing mirror
+    const tripRight = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.9, 0.36), this.antiqueMirrorMat);
+    tripRight.position.set(11.68, floorY + 1.35, -67.9);
+    tripRight.rotation.y = -0.35;
+    this.group.add(tripRight);
+
+    // Yamini's Personal Journal on the dressing table (CLUE_UPPER_BEDROOM_DIARY)
+    const diary = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.04, 0.45), this.paperMat);
+    diary.position.set(11.4, floorY + 0.81, -67.5);
+    diary.rotation.y = 0.2;
+    this.group.add(diary);
+
+    // Feather quill & inkwell
+    const inkwell = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.07, 8), this.castIronMat);
+    inkwell.position.set(11.4, floorY + 0.81, -67.15);
+    this.group.add(inkwell);
+
+    // -------------------------------------------------------------------------
+    // OLD CHAIR & PORCELAIN DOLL
+    // Vintage rocking chair at x = 6.8, z = -62.5 (preserves CLUE_UPPER_PORCELAIN_DOLL location)
+    // -------------------------------------------------------------------------
     const chairGroup = new THREE.Group();
     const seat = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.06, 0.6), this.darkTeakMat);
     seat.position.set(0, 0.45, 0);
     chairGroup.add(seat);
+
+    // Curved rocking runners
+    const runnerGeo = new THREE.BoxGeometry(0.05, 0.06, 0.95);
+    const runnerL = new THREE.Mesh(runnerGeo, this.darkTeakMat);
+    runnerL.position.set(-0.28, 0.03, 0);
+    runnerL.rotation.x = -0.05;
+    chairGroup.add(runnerL);
+    const runnerR = new THREE.Mesh(runnerGeo, this.darkTeakMat);
+    runnerR.position.set(0.28, 0.03, 0);
+    runnerR.rotation.x = -0.05;
+    chairGroup.add(runnerR);
+
+    // Spindle backrest
+    const backrest = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.65, 0.05), this.darkTeakMat);
+    backrest.position.set(0, 0.78, -0.26);
+    chairGroup.add(backrest);
+
     chairGroup.position.set(6.8, floorY, -62.5);
     chairGroup.rotation.y = -0.45;
     this.group.add(chairGroup);
     this.addBoxCollider(new THREE.Vector3(6.8, floorY + 0.5, -62.5), new THREE.Vector3(1.0, 1.2, 1.0));
 
-    // Antique Porcelain doll on chair
+    // Antique Porcelain doll on chair (CLUE_UPPER_PORCELAIN_DOLL)
     const dollMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(0.35, 0.45),
       new THREE.MeshBasicMaterial({
@@ -1679,27 +2523,48 @@ export class BungalowInterior {
     dollMesh.rotation.y = -0.45;
     this.group.add(dollMesh);
 
-    // Bedside nightstand
-    const stand = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.65, 0.55), this.darkTeakMat);
-    stand.position.set(11.8, floorY + 0.325, -72.0);
-    this.group.add(stand);
-    this.addBoxCollider(stand.position, new THREE.Vector3(0.7, 0.8, 0.7));
+    // -------------------------------------------------------------------------
+    // OLD CURTAINS (Heavy velvet draperies on exterior windows)
+    // -------------------------------------------------------------------------
+    this.createOldCurtains(new THREE.Vector3(12.35, floorY + 1.8, -68.5), 1.8, 2.2, true);
+    this.createOldCurtains(new THREE.Vector3(12.35, floorY + 1.8, -74.0), 1.8, 2.2, true);
 
-    // Antique Brass Music Box on nightstand
-    const mbox = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.14, 0.18), this.brassMat);
-    mbox.position.set(11.8, floorY + 0.72, -72.0);
-    this.group.add(mbox);
+    // -------------------------------------------------------------------------
+    // ABANDONED PERSONAL OBJECTS & ROOM RUNNER
+    // -------------------------------------------------------------------------
+    // Antique phonograph / gramophone with brass horn on round pedestal table
+    const pedTable = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.72, 12), this.darkTeakMat);
+    pedTable.position.set(11.6, floorY + 0.36, -75.5);
+    this.group.add(pedTable);
+    this.addBoxCollider(pedTable.position, new THREE.Vector3(0.75, 0.8, 0.75));
 
-    // Desk with Yamini's Personal Journal
-    const desk = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.9), this.darkTeakMat);
-    desk.position.set(11.4, floorY + 0.75, -67.5);
-    this.group.add(desk);
-    this.addBoxCollider(desk.position, new THREE.Vector3(1.8, 1.0, 1.1));
+    const phonoBox = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.32), this.darkTeakMat);
+    phonoBox.position.set(11.6, floorY + 0.79, -75.5);
+    this.group.add(phonoBox);
 
-    const diary = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.04, 0.45), this.paperMat);
-    diary.position.set(11.4, floorY + 0.81, -67.5);
-    diary.rotation.y = 0.2;
-    this.group.add(diary);
+    const phonoHorn = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.42, 12), this.brassMat);
+    phonoHorn.position.set(11.5, floorY + 1.05, -75.5);
+    phonoHorn.rotation.z = -Math.PI / 3;
+    this.group.add(phonoHorn);
+
+    // Overturned antique stool on floor
+    const otStool = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.08), this.darkTeakMat);
+    otStool.position.set(10.2, floorY + 0.22, -67.5);
+    otStool.rotation.x = 1.1;
+    otStool.rotation.y = 0.4;
+    this.group.add(otStool);
+
+    // Worn patterned floor carpet in front of the bed
+    const carpetR = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.2), this.wornCarpetMat);
+    carpetR.rotation.x = -Math.PI / 2;
+    carpetR.position.set(8.2, floorY + 0.01, -72.0);
+    this.group.add(carpetR);
+
+    // Subtle warm ambient sconce in Right Bedroom
+    const rightAmbSconce = new THREE.PointLight(0xf5a242, 1.4, 11.0, 1.8);
+    rightAmbSconce.position.set(7.5, floorY + 2.4, -68.0);
+    this.group.add(rightAmbSconce);
+    this.flickeringLamps.push(rightAmbSconce);
   }
 
   private buildDustParticles(): void {
@@ -1827,9 +2692,17 @@ export class BungalowInterior {
         subtext: 'The glass feels freezing to the touch. Do not gaze into it too long.',
       },
       {
+        id: 'CLUE_MASTER_BEDROOM_PORTRAIT',
+        name: 'Father’s Estate Will & Sankar’s Warning Letter (1983)',
+        room: 'Second Floor — Left Master Bedroom',
+        position: new THREE.Vector3(-11.5, 6.25, -62.5),
+        description: '"To my son Sankar — This bungalow has belonged to our ancestors for three generations. But the ground upon which it rests holds ancient grief. Never sleep with the master bedroom doors unlatched when the monsoon rains arrive.\n\nThere are nights when the house remembers those who never left."',
+        subtext: 'A yellowed family document under glass with an aged red wax seal.',
+      },
+      {
         id: 'CLUE_UPPER_BEDROOM_DIARY',
         name: 'Yamini’s Personal Journal',
-        room: "Second Floor — Yamini's Bedroom",
+        room: 'Second Floor — Right Master Bedroom',
         position: new THREE.Vector3(11.4, 6.2, -67.5),
         description: '"November 3rd — I shouldn\'t have come here.\n\nSankar begged me not to return to this house alone. But I wanted to feel closer to our childhood memories. Now every night, the walls breathe.\n\nLast night I woke up and my porcelain doll had been moved from the chair to the foot of my bed. The music box began winding itself in the dark.\n\nIf anyone finds this... please tell my brother Sankar that I tried to run. But the house won\'t let me leave."',
         subtext: 'A tear-stained page with frantic handwriting.',
