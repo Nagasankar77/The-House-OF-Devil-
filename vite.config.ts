@@ -8,7 +8,15 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@/': path.resolve(import.meta.dirname, './frontend/'),
+        '@frontend': path.resolve(import.meta.dirname, 'frontend'),
+        '@backend': path.resolve(import.meta.dirname, 'backend'),
+        '@shared': path.resolve(import.meta.dirname, 'shared'),
+        '@game': path.resolve(import.meta.dirname, 'frontend/game'),
+        '@systems': path.resolve(import.meta.dirname, 'frontend/systems'),
+        '@components': path.resolve(import.meta.dirname, 'frontend/components'),
+        '@screens': path.resolve(import.meta.dirname, 'frontend/screens'),
+        '@assets': path.resolve(import.meta.dirname, 'frontend/assets'),
       },
     },
     server: {

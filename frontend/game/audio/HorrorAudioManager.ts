@@ -1,0 +1,5655 @@
+/**
+ * THE HOUSE OF DEVIL — Clean Cinematic Horror Audio System
+ * 
+ * High-fidelity, zero-clipping procedural audio engine:
+ * - Clean layered horror ambience (Background ambience, Wind, Thunder)
+ * - Zero clipping, zero crackling, zero blown-out speaker distortion
+ * - Seamless equal-power loop crossfading (eliminates boundary clicks/pops)
+ * - Safe 32Hz subsonic filter & transparent 40ms attack master compressor (preserves clean bass without wave-shaping distortion)
+ * - Dynamic Lightning & Thunder with variable realistic propagation delays (0.6s - 3.5s)
+ * - 3D Positional Audio tracking real-time camera orientation with smooth distance attenuation
+ * - Rare psychological stalker footsteps appearing behind player while walking
+ * - Subtle whispered vocal formants and faint breathing cues
+ * - Physiological Heartbeat engine scaling as player nears the locked gate
+ * - Dynamic silence tension manager
+ * - Cross-browser safe AudioContext lifecycle management (Desktop & Mobile)
+ */
+
+import { SurfaceType } from '../../../shared/types';
+
+export type AudioMode = 'MENU' | 'GAMEPLAY' | 'INSPECTING';
+
+export interface SpatialAudioParams {
+  pan: number;
+  filterCutoff: number;
+  attenuation: number;
+  isBehind: boolean;
+}
+
+export class HorrorAudioManager {
+  private ctx: AudioContext | null = null;
+
+  // Master audio buses
+  private masterGain: GainNode | null = null;
+  private masterLimiter: DynamicsCompressorNode | null = null;
+  private safetyHighpass: BiquadFilterNode | null = null;
+
+  // Sub-mix buses
+  private ambienceBus: GainNode | null = null;
+  private sfxBus: GainNode | null = null;
+  private uiBus: GainNode | null = null;
+
+  // Layer 1: Dark Cinematic Drone & Eerie Pad
+  private droneGain: GainNode | null = null;
+  private droneOsc1: OscillatorNode | null = null;
+  private droneOsc2: OscillatorNode | null = null;
+  private droneOscSub: OscillatorNode | null = null;
+  private droneEerieOsc: OscillatorNode | null = null;
+  private droneFilter: BiquadFilterNode | null = null;
+
+  // Layer 2: Cold Forest Wind
+  private windGain: GainNode | null = null;
+  private windLfoGain: GainNode | null = null;
+  private windFilter: BiquadFilterNode | null = null;
+  private windLowpass: BiquadFilterNode | null = null;
+  private windLfo: OscillatorNode | null = null;
+  private windSource: AudioBufferSourceNode | null = null;
+
+  // Layer 3: Rain Ambience
+  private rainGain: GainNode | null = null;
+  private rainSource: AudioBufferSourceNode | null = null;
+
+  // Heartbeat Engine
+  private heartbeatGain: GainNode | null = null;
+  private heartbeatIntervalId: any = null;
+  private heartbeatBpm = 58;
+  private heartbeatTargetVol = 0;
+  private isHeartbeatRunning = false;
+
+  // Seamless Pre-Rendered Audio Buffers (Zero runtime GC allocation)
+  private pinkNoiseBuffer: AudioBuffer | null = null;
+  private brownNoiseBuffer: AudioBuffer | null = null;
+  private rainBuffer: AudioBuffer | null = null;
+  private footstepBuffers: AudioBuffer[] = [];
+  private gravelStepBuffers: AudioBuffer[] = [];
+  private leavesStepBuffers: AudioBuffer[] = [];
+  private woodStepBuffers: AudioBuffer[] = [];
+  private stoneStepBuffers: AudioBuffer[] = [];
+  private currentSurface: SurfaceType = 'GRAVEL';
+
+  // State & Volumes
+  private isInitialized = false;
+  private currentMode: AudioMode = 'MENU';
+  private masterVolume = 0.75;
+  private musicVolume = 0.55; // Ambience
+  private sfxVolume = 0.70;
+  private isDucked = false;
+
+  // 3D Listener Orientation tracking (from Three.js camera)
+  private listenerPos = { x: 0, y: 1.8, z: 8 };
+  private listenerForward = { x: 0, y: 0, z: -1 };
+  private isPlayerMoving = false;
+
+  // Random Event & Tension Manager
+  private isEventManagerRunning = false;
+  private eventTimeoutId: any = null;
+  private lastFootstepTime = 0;
+  private lastTensionUpdate = 0;
+  private lastStalkerFootstepTime = 0;
+  private stepIndex = 0;
+  private currentDistanceToGate = 30;
+
+  // Story Mode Cinematic Audio Architecture
+  private storyScoreBus: GainNode | null = null;
+  private storyActiveOscs: OscillatorNode[] = [];
+  private storyActiveGains: GainNode[] = [];
+  private storyIntervalId: any = null;
+
+  // Official Uploaded Main Exterior Iron Gate Opening Audio
+  private gateOpeningAudioBuffer: AudioBuffer | null = null;
+  private gateOpeningAudioSource: AudioBufferSourceNode | null = null;
+  private hasPlayedGateAudio = false;
+  private isMusicDisabledAfterGate = false;
+
+  // Official Uploaded Kitchen Room Entry Horror Audio (kitchen.mpeg)
+  private kitchenAudioBuffer: AudioBuffer | null = null;
+  private kitchenAudioSource: AudioBufferSourceNode | null = null;
+  private kitchenAudioUrl: string = '/audio/kitchen.mpeg';
+
+  // Official Uploaded Starting Game Horror Audio (starting.mpeg)
+  private startingAudioBuffer: AudioBuffer | null = null;
+  private startingAudioSource: AudioBufferSourceNode | null = null;
+  private startingAudioUrl: string = '/audio/starting.mpeg';
+
+  // Official Uploaded Bathroom Room Entry Horror Audio (bathroom.mpeg)
+  private bathroomAudioBuffer: AudioBuffer | null = null;
+  private bathroomAudioSource: AudioBufferSourceNode | null = null;
+  private bathroomAudioUrl: string = '/audio/bathroom.mpeg';
+
+  // Official Uploaded Store Room Entry Horror Audio (store room.mpeg)
+  private storeRoomAudioBuffer: AudioBuffer | null = null;
+  private storeRoomAudioSource: AudioBufferSourceNode | null = null;
+  private storeRoomAudioUrl: string = '/audio/store_room.mpeg';
+
+  // Official Uploaded Outdoor Area Between Iron Gate and Bungalow Horror Audio (between iron gate and bunglow.mpeg)
+  private gateToBungalowAudioBuffer: AudioBuffer | null = null;
+  private gateToBungalowAudioSource: AudioBufferSourceNode | null = null;
+  private gateToBungalowAudioUrl: string = '/audio/between_iron_gate_and_bunglow.mpeg';
+
+  // Official Uploaded Game Background Music (The_Weight_of_Stone.mp3)
+  private bgmAudio: HTMLAudioElement | null = null;
+  private isBgmPlaying = false;
+  private isBgmPausedForRoom = false;
+  private activeRoomSounds = 0;
+  private bgmFadeRaf: number | null = null;
+
+  // Single Reused HTMLAudio Elements (prevents duplicate instances & memory leaks)
+  private kitchenAudioEl: HTMLAudioElement | null = null;
+  private isKitchenPlaying = false;
+  private kitchenSafetyTimeout: any = null;
+
+  private startingAudioEl: HTMLAudioElement | null = null;
+  private isStartingPlaying = false;
+  private startingSafetyTimeout: any = null;
+
+  private bathroomAudioEl: HTMLAudioElement | null = null;
+  private isBathroomPlaying = false;
+  private bathroomSafetyTimeout: any = null;
+
+  private storeRoomAudioEl: HTMLAudioElement | null = null;
+  private isStoreRoomPlaying = false;
+  private storeRoomSafetyTimeout: any = null;
+
+  private gateToBungalowAudioEl: HTMLAudioElement | null = null;
+  private isGateToBungalowPlaying = false;
+  private gateToBungalowSafetyTimeout: any = null;
+
+  private gateOpeningAudioEl: HTMLAudioElement | null = null;
+  private isGateOpeningPlaying = false;
+  private gateOpeningSafetyTimeout: any = null;
+
+  // Official Uploaded Outdoor Lamps Glow Audio (lamp.mpeg)
+  private lampAudioBuffer: AudioBuffer | null = null;
+  private lampAudioSource: AudioBufferSourceNode | null = null;
+  private lampAudioUrl: string = '/audio/lamp.mpeg';
+  private lampAudioEl: HTMLAudioElement | null = null;
+  private isLampSfxPlaying = false;
+  private lampSafetyTimeout: any = null;
+  private lampResumeTimeout: any = null;
+
+  // Official Uploaded 5-Item Puzzle Secret Door Audio (secret door.mpeg)
+  private secretDoorAudioBuffer: AudioBuffer | null = null;
+  private secretDoorAudioSource: AudioBufferSourceNode | null = null;
+  private secretDoorAudioUrl: string = '/audio/secret door.mpeg';
+  private secretDoorAudioEl: HTMLAudioElement | null = null;
+  private isSecretDoorPlaying = false;
+  private hasPlayedSecretDoorAudio = false;
+  private secretDoorSafetyTimeout: any = null;
+  private secretDoorResumeTimeout: any = null;
+
+  // Official Uploaded Room Containing the TV Horror Audio (hall(1).mpeg)
+  private tvRoomAudioBuffer: AudioBuffer | null = null;
+  private tvRoomAudioSource: AudioBufferSourceNode | null = null;
+  private tvRoomAudioUrl: string = '/audio/hall(1).mpeg';
+  private tvRoomAudioEl: HTMLAudioElement | null = null;
+  private isTvRoomPlaying = false;
+  private hasPlayedTvRoomAudio = false;
+  private tvRoomSafetyTimeout: any = null;
+  private tvRoomResumeTimeout: any = null;
+
+  // Compatibility aliases
+  private hallAudioBuffer: AudioBuffer | null = null;
+  private hallAudioSource: AudioBufferSourceNode | null = null;
+  private hallAudioUrl: string = '/audio/hall(1).mpeg';
+  private hallAudioEl: HTMLAudioElement | null = null;
+  private isHallPlaying = false;
+  private hasPlayedHallAudio = false;
+  private hallSafetyTimeout: any = null;
+  private hallResumeTimeout: any = null;
+
+  private initPromise: Promise<void> | null = null;
+
+  constructor() {}
+
+  /**
+   * Initialize Web Audio API on genuine user gesture (idempotent, single context).
+   */
+  public async init(): Promise<void> {
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+
+    if (this.isInitialized && this.ctx && this.ctx.state !== 'closed') {
+      if (this.ctx.state === 'suspended') {
+        try {
+          await this.ctx.resume();
+        } catch (e) {
+          console.warn('AudioContext resume failed:', e);
+        }
+      }
+      return;
+    }
+
+    this.initPromise = (async () => {
+      try {
+        if (!this.ctx || this.ctx.state === 'closed') {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          this.ctx = new AudioCtx();
+        }
+        if (this.ctx.state === 'suspended') {
+          await this.ctx.resume();
+        }
+
+        // 1. Pre-generate smooth, click-free audio buffers
+        this.generatePreRenderedBuffers();
+
+        // 2. Setup master limiter & safety sub-filter
+        this.setupMasterChain();
+
+        // 3. Setup continuous layered ambience (Drone, Wind, Rain)
+        this.setupContinuousAmbience();
+
+        // 4. Setup heartbeat synthesizer bus
+        this.setupHeartbeatEngine();
+
+        // 5. Start random atmospheric event manager
+        this.startEventManager();
+
+        // 6. Preload and instantiate official BGM and SFX single instances
+        this.setupBgm();
+        this.setupReusedAudioElements();
+
+        // 7. Preload Web Audio buffers
+        this.loadGateOpeningAudio();
+        this.loadKitchenAudio();
+        this.loadStartingAudio();
+        this.loadBathroomAudio();
+        this.loadStoreRoomAudio();
+        this.loadGateToBungalowAudio();
+        this.loadLampAudio();
+        this.loadSecretDoorAudio();
+        this.loadHallAudio();
+        this.loadTvRoomAudio();
+
+        this.isInitialized = true;
+        this.setMode('MENU');
+      } catch (e) {
+        console.warn('Audio initialization failed:', e);
+      } finally {
+        this.initPromise = null;
+      }
+    })();
+
+    return this.initPromise;
+  }
+
+  /**
+   * Pre-instantiates the dedicated HTMLAudioElements once to ensure single instances.
+   */
+  public setupReusedAudioElements(): void {
+    if (typeof window === 'undefined') return;
+
+    if (!this.kitchenAudioEl) {
+      this.kitchenAudioEl = new Audio(this.kitchenAudioUrl);
+      this.kitchenAudioEl.preload = 'auto';
+    }
+    if (!this.startingAudioEl) {
+      this.startingAudioEl = new Audio(this.startingAudioUrl);
+      this.startingAudioEl.preload = 'auto';
+    }
+    if (!this.bathroomAudioEl) {
+      this.bathroomAudioEl = new Audio(this.bathroomAudioUrl);
+      this.bathroomAudioEl.preload = 'auto';
+    }
+    if (!this.storeRoomAudioEl) {
+      this.storeRoomAudioEl = new Audio(this.storeRoomAudioUrl);
+      this.storeRoomAudioEl.preload = 'auto';
+    }
+    if (!this.gateToBungalowAudioEl) {
+      this.gateToBungalowAudioEl = new Audio(this.gateToBungalowAudioUrl);
+      this.gateToBungalowAudioEl.preload = 'auto';
+    }
+    if (!this.gateOpeningAudioEl) {
+      this.gateOpeningAudioEl = new Audio('/audio/gate-opening-sound.wav');
+      this.gateOpeningAudioEl.preload = 'auto';
+    }
+    if (!this.lampAudioEl) {
+      this.lampAudioEl = new Audio(this.lampAudioUrl);
+      this.lampAudioEl.preload = 'auto';
+    }
+    if (!this.secretDoorAudioEl) {
+      this.secretDoorAudioEl = new Audio(this.secretDoorAudioUrl);
+      this.secretDoorAudioEl.preload = 'auto';
+    }
+    if (!this.hallAudioEl) {
+      this.hallAudioEl = new Audio(this.hallAudioUrl);
+      this.hallAudioEl.preload = 'auto';
+    }
+    if (!this.tvRoomAudioEl) {
+      this.tvRoomAudioEl = new Audio(this.tvRoomAudioUrl);
+      this.tvRoomAudioEl.preload = 'auto';
+    }
+  }
+
+  /**
+   * Master bus signal path:
+   * Sub-buses -> Master Gain -> Safety Highpass (32Hz) -> Transparent Compressor -> Destination
+   * 
+   * Configured with 40ms attack to prevent waveform clipping and speaker distortion on bass frequencies.
+   */
+  private setupMasterChain(): void {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    // Sub-buses (All non-music sounds belong to the SFX category)
+    this.ambienceBus = this.ctx.createGain();
+    this.ambienceBus.gain.setValueAtTime(this.sfxVolume, now);
+
+    this.sfxBus = this.ctx.createGain();
+    this.sfxBus.gain.setValueAtTime(this.sfxVolume, now);
+
+    this.uiBus = this.ctx.createGain();
+    this.uiBus.gain.setValueAtTime(0.40 * this.sfxVolume, now);
+
+    this.storyScoreBus = this.ctx.createGain();
+    this.storyScoreBus.gain.setValueAtTime(0.80 * this.sfxVolume, now);
+
+    // Master bus
+    this.masterGain = this.ctx.createGain();
+    this.masterGain.gain.setValueAtTime(this.masterVolume, now);
+
+    this.ambienceBus.connect(this.masterGain);
+    this.sfxBus.connect(this.masterGain);
+    this.uiBus.connect(this.masterGain);
+    this.storyScoreBus.connect(this.masterGain);
+
+    // Subsonic safety highpass filter (removes DC offset and <32Hz rumble that causes speaker distortion)
+    this.safetyHighpass = this.ctx.createBiquadFilter();
+    this.safetyHighpass.type = 'highpass';
+    this.safetyHighpass.frequency.setValueAtTime(32, now);
+    this.safetyHighpass.Q.setValueAtTime(0.707, now);
+    this.masterGain.connect(this.safetyHighpass);
+
+    // Transparent Master Dynamics Compressor (smooth leveling, NO wave-chopping distortion)
+    this.masterLimiter = this.ctx.createDynamicsCompressor();
+    this.masterLimiter.threshold.setValueAtTime(-8.0, now); // dB
+    this.masterLimiter.knee.setValueAtTime(10.0, now);       // Soft knee
+    this.masterLimiter.ratio.setValueAtTime(3.2, now);       // Gentle musical compression
+    this.masterLimiter.attack.setValueAtTime(0.040, now);    // 40ms attack: preserves bass waveform shape!
+    this.masterLimiter.release.setValueAtTime(0.24, now);    // 240ms smooth recovery
+
+    this.safetyHighpass.connect(this.masterLimiter);
+    this.masterLimiter.connect(this.ctx.destination);
+  }
+
+  /**
+   * Pre-generates high-fidelity stereo noise and impulse textures with equal-power loop crossfading.
+   * Eliminates loop clicks, pops, and DC discontinuities.
+   */
+  private generatePreRenderedBuffers(): void {
+    if (!this.ctx) return;
+    const sampleRate = this.ctx.sampleRate;
+
+    // 1. High-fidelity Pink Noise Buffer (10 seconds, seamless equal-power loop)
+    const pinkLength = sampleRate * 10;
+    this.pinkNoiseBuffer = this.ctx.createBuffer(2, pinkLength, sampleRate);
+    const fadeLen = Math.floor(sampleRate * 0.5); // 0.5s crossfade window
+
+    for (let ch = 0; ch < 2; ch++) {
+      const data = this.pinkNoiseBuffer.getChannelData(ch);
+      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+      for (let i = 0; i < pinkLength; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        b3 = 0.86650 * b3 + white * 0.3104856;
+        b4 = 0.55000 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.0168980;
+        const pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+        b6 = white * 0.115926;
+        data[i] = pink * 0.022; // Clean headroom
+      }
+      // Equal-power Hann crossfade on buffer boundaries
+      for (let i = 0; i < fadeLen; i++) {
+        const prog = i / fadeLen;
+        const gainIn = Math.sin(prog * (Math.PI / 2));
+        const gainOut = Math.cos(prog * (Math.PI / 2));
+        const headIdx = i;
+        const tailIdx = pinkLength - fadeLen + i;
+        const blended = data[headIdx] * gainIn + data[tailIdx] * gainOut;
+        data[headIdx] = blended;
+        data[tailIdx] = blended;
+      }
+    }
+
+    // 2. High-fidelity Brown Noise Buffer (10 seconds, seamless equal-power loop)
+    const brownLength = sampleRate * 10;
+    this.brownNoiseBuffer = this.ctx.createBuffer(2, brownLength, sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = this.brownNoiseBuffer.getChannelData(ch);
+      let lastOut = 0;
+      for (let i = 0; i < brownLength; i++) {
+        const white = Math.random() * 2 - 1;
+        // Leaky integrator filtered to avoid DC accumulation
+        lastOut = (lastOut * 0.97) + (white * 0.03);
+        data[i] = lastOut * 0.45;
+      }
+      for (let i = 0; i < fadeLen; i++) {
+        const prog = i / fadeLen;
+        const gainIn = Math.sin(prog * (Math.PI / 2));
+        const gainOut = Math.cos(prog * (Math.PI / 2));
+        const headIdx = i;
+        const tailIdx = brownLength - fadeLen + i;
+        const blended = data[headIdx] * gainIn + data[tailIdx] * gainOut;
+        data[headIdx] = blended;
+        data[tailIdx] = blended;
+      }
+    }
+
+    // 3. Subtle Rain Ambience Buffer (8 seconds, smooth continuous bed)
+    const rainLength = sampleRate * 8;
+    this.rainBuffer = this.ctx.createBuffer(2, rainLength, sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = this.rainBuffer.getChannelData(ch);
+      let filterA = 0;
+      let filterB = 0;
+      for (let i = 0; i < rainLength; i++) {
+        const white = Math.random() * 2 - 1;
+        // Two-pole soft band-filtering: gentle rain hiss without harsh clicks
+        filterA = filterA * 0.82 + white * 0.18;
+        filterB = filterB * 0.70 + (white - filterA) * 0.30;
+        data[i] = filterB * 0.085;
+      }
+      for (let i = 0; i < fadeLen; i++) {
+        const prog = i / fadeLen;
+        const gainIn = Math.sin(prog * (Math.PI / 2));
+        const gainOut = Math.cos(prog * (Math.PI / 2));
+        const headIdx = i;
+        const tailIdx = rainLength - fadeLen + i;
+        const blended = data[headIdx] * gainIn + data[tailIdx] * gainOut;
+        data[headIdx] = blended;
+        data[tailIdx] = blended;
+      }
+    }
+
+    // 4. Pre-rendered Material-Aware Footstep Impulses
+    // A. GRAVEL: Gritty pebble friction, loose stone grinding, firm packed driveway ground thud
+    const gravelLength = Math.floor(sampleRate * 0.22);
+    for (let v = 0; v < 5; v++) {
+      const stepBuf = this.ctx.createBuffer(1, gravelLength, sampleRate);
+      const data = stepBuf.getChannelData(0);
+      let gritFilter = 0;
+      for (let i = 0; i < gravelLength; i++) {
+        const t = i / sampleRate;
+        const env = t < 0.012 ? t / 0.012 : Math.exp(-(t - 0.012) * 19.0);
+        const white = Math.random() * 2 - 1;
+        gritFilter = gritFilter * 0.58 + white * 0.42;
+        const grit = (white - gritFilter) * (1.0 + 0.35 * Math.sin(t * (420 + v * 55)));
+        const thudFreq = 115 + (v % 3) * 18;
+        const thud = Math.sin(t * 2 * Math.PI * thudFreq) * Math.exp(-t * 24.0) * 0.36;
+        const pebbleClick = Math.sin(t * 2 * Math.PI * (1750 + v * 280)) * Math.exp(-t * 65.0) * 0.16;
+        data[i] = (grit * 0.26 * env + thud + pebbleClick * env) * 0.38;
+      }
+      this.gravelStepBuffers.push(stepBuf);
+    }
+
+    // B. LEAVES: Brittle twig crackles, crisp multi-point dry leaf fractures, organic rustle tail, cushioned thud
+    const leavesLength = Math.floor(sampleRate * 0.26);
+    for (let v = 0; v < 5; v++) {
+      const stepBuf = this.ctx.createBuffer(1, leavesLength, sampleRate);
+      const data = stepBuf.getChannelData(0);
+      const crackleTimes = [
+        0.007 + (v * 0.003) % 0.011,
+        0.021 + ((v * 7) % 5) * 0.004,
+        0.039 + ((v * 3) % 4) * 0.005,
+        0.062 + ((v * 5) % 6) * 0.004,
+      ];
+      let noiseFilter = 0;
+      let rustleFilter = 0;
+      for (let i = 0; i < leavesLength; i++) {
+        const t = i / sampleRate;
+        const rustleEnv = t < 0.024 ? t / 0.024 : Math.exp(-(t - 0.024) * 14.5);
+        const rawWhite = Math.random() * 2 - 1;
+        noiseFilter = noiseFilter * 0.46 + rawWhite * 0.54;
+        const leafNoise = rawWhite - noiseFilter;
+        rustleFilter = rustleFilter * 0.74 + rawWhite * 0.26;
+
+        let crackleSum = 0;
+        for (const ct of crackleTimes) {
+          const dt = t - ct;
+          if (dt >= 0 && dt < 0.008) {
+            const cProgress = dt / 0.008;
+            const cEnv = Math.sin(cProgress * Math.PI) * Math.exp(-cProgress * 3.6);
+            const snap = (Math.random() * 2 - 1) * 0.46 + Math.sin(dt * 2 * Math.PI * (2900 + v * 320)) * 0.24;
+            crackleSum += snap * cEnv;
+          }
+        }
+
+        const cushionedThud = Math.sin(t * 2 * Math.PI * (78 + v * 8)) * Math.exp(-t * 29.0) * 0.16;
+        data[i] = (leafNoise * 0.26 * rustleEnv + rustleFilter * 0.09 * rustleEnv + crackleSum * 0.38 + cushionedThud) * 0.40;
+      }
+      this.leavesStepBuffers.push(stepBuf);
+    }
+
+    // C. WOOD: Hollow timber cavity resonance (~140-170Hz), shoe heel tap, and subtle aged plank flex/creak
+    const woodLength = Math.floor(sampleRate * 0.25);
+    for (let v = 0; v < 5; v++) {
+      const stepBuf = this.ctx.createBuffer(1, woodLength, sampleRate);
+      const data = stepBuf.getChannelData(0);
+      const woodFund = 144 + v * 9;
+      const woodHarm = woodFund * 2.38;
+      const hasCreak = v === 1 || v === 3;
+      let noiseFilt = 0;
+      for (let i = 0; i < woodLength; i++) {
+        const t = i / sampleRate;
+        const tapEnv = t < 0.006 ? t / 0.006 : Math.exp(-(t - 0.006) * 78.0);
+        const white = Math.random() * 2 - 1;
+        noiseFilt = noiseFilt * 0.65 + white * 0.35;
+        const tap = (white - noiseFilt) * tapEnv * 0.24;
+
+        const resEnv = t < 0.008 ? t / 0.008 : Math.exp(-(t - 0.008) * 19.5);
+        const res = (
+          Math.sin(t * 2 * Math.PI * woodFund) * 0.42 +
+          Math.sin(t * 2 * Math.PI * woodHarm) * 0.19
+        ) * resEnv;
+
+        let creak = 0;
+        if (hasCreak && t > 0.014 && t < 0.12) {
+          const cProg = (t - 0.014) / 0.106;
+          const cEnv = Math.sin(cProg * Math.PI) * Math.exp(-cProg * 2.2);
+          const cFreq = 315 - cProg * 85;
+          creak = Math.sin(t * 2 * Math.PI * cFreq) * cEnv * 0.15;
+        }
+
+        data[i] = (tap + res + creak) * 0.42;
+      }
+      this.woodStepBuffers.push(stepBuf);
+    }
+
+    // D. STONE: Solid granite/masonry slap, crisp unyielding click, and rapid decay
+    const stoneLength = Math.floor(sampleRate * 0.18);
+    for (let v = 0; v < 5; v++) {
+      const stepBuf = this.ctx.createBuffer(1, stoneLength, sampleRate);
+      const data = stepBuf.getChannelData(0);
+      let noiseFilt = 0;
+      for (let i = 0; i < stoneLength; i++) {
+        const t = i / sampleRate;
+        const tapEnv = t < 0.004 ? t / 0.004 : Math.exp(-(t - 0.004) * 68.0);
+        const white = Math.random() * 2 - 1;
+        noiseFilt = noiseFilt * 0.54 + white * 0.46;
+        const tap = (white - noiseFilt) * tapEnv * 0.34;
+
+        const thudFreq = 185 + (v * 14);
+        const thud = Math.sin(t * 2 * Math.PI * thudFreq) * Math.exp(-t * 39.0) * 0.36;
+
+        let echo = 0;
+        if (t > 0.018) {
+          const dt = t - 0.018;
+          echo = Math.sin(dt * 2 * Math.PI * (thudFreq * 1.5)) * Math.exp(-dt * 52.0) * 0.09;
+        }
+
+        data[i] = (tap + thud + echo) * 0.38;
+      }
+      this.stoneStepBuffers.push(stepBuf);
+    }
+
+    // Keep primary reference for backward compatibility
+    this.footstepBuffers = this.gravelStepBuffers;
+  }
+
+  /**
+   * Continuous layered ambience:
+   * Layer 1: Dark Sub-Drone & Eerie Pad (Pure sines, warm 85Hz lowpass, 0.3Hz binaural pulse)
+   * Layer 2: Cold Forest Wind (Bandpass pink noise with smooth LFO gain swell)
+   * Layer 3: Rain Ambience (Gentle stereo bed)
+   */
+  private setupContinuousAmbience(): void {
+    if (!this.ctx || !this.ambienceBus) return;
+    const now = this.ctx.currentTime;
+
+    // === LAYER 1: DARK ATMOSPHERIC DRONE ===
+    this.droneOsc1 = this.ctx.createOscillator();
+    this.droneOsc1.type = 'sine';
+    this.droneOsc1.frequency.setValueAtTime(48.0, now); // Low G0
+
+    this.droneOsc2 = this.ctx.createOscillator();
+    this.droneOsc2.type = 'sine';
+    this.droneOsc2.frequency.setValueAtTime(48.3, now); // 0.3Hz hypnotic binaural beat
+
+    this.droneOscSub = this.ctx.createOscillator();
+    this.droneOscSub.type = 'sine';
+    this.droneOscSub.frequency.setValueAtTime(72.0, now); // Perfect fifth harmonic overtone
+
+    this.droneFilter = this.ctx.createBiquadFilter();
+    this.droneFilter.type = 'lowpass';
+    this.droneFilter.frequency.setValueAtTime(85, now);
+    this.droneFilter.Q.setValueAtTime(0.707, now);
+
+    this.droneGain = this.ctx.createGain();
+    this.droneGain.gain.setValueAtTime(0.0, now); // Replaced by official The_Weight_of_Stone.mp3 BGM
+
+    // Ethereal subtle high tension resonance
+    this.droneEerieOsc = this.ctx.createOscillator();
+    this.droneEerieOsc.type = 'sine';
+    this.droneEerieOsc.frequency.setValueAtTime(432.0, now);
+
+    const eerieFilter = this.ctx.createBiquadFilter();
+    eerieFilter.type = 'bandpass';
+    eerieFilter.frequency.setValueAtTime(432, now);
+    eerieFilter.Q.setValueAtTime(6.0, now);
+
+    const eerieGain = this.ctx.createGain();
+    eerieGain.gain.setValueAtTime(0.0, now);
+
+    this.droneEerieOsc.connect(eerieFilter);
+    eerieFilter.connect(eerieGain);
+    eerieGain.connect(this.ambienceBus);
+
+    this.droneOsc1.connect(this.droneFilter);
+    this.droneOsc2.connect(this.droneFilter);
+    this.droneOscSub.connect(this.droneFilter);
+    this.droneFilter.connect(this.droneGain);
+    this.droneGain.connect(this.ambienceBus);
+
+    this.droneOsc1.start();
+    this.droneOsc2.start();
+    this.droneOscSub.start();
+    this.droneEerieOsc.start();
+
+    // === LAYER 2: COLD FOREST WIND ===
+    if (this.pinkNoiseBuffer) {
+      this.windSource = this.ctx.createBufferSource();
+      this.windSource.buffer = this.pinkNoiseBuffer;
+      this.windSource.loop = true;
+
+      this.windFilter = this.ctx.createBiquadFilter();
+      this.windFilter.type = 'bandpass';
+      this.windFilter.frequency.setValueAtTime(320, now);
+      this.windFilter.Q.setValueAtTime(1.1, now);
+
+      this.windLowpass = this.ctx.createBiquadFilter();
+      this.windLowpass.type = 'lowpass';
+      this.windLowpass.frequency.setValueAtTime(650, now);
+      this.windLowpass.Q.setValueAtTime(0.7, now);
+
+      // Smooth volume LFO for wind swells (modulates gain, NOT filter frequency, preventing parameter zipper noise)
+      this.windLfo = this.ctx.createOscillator();
+      this.windLfo.frequency.setValueAtTime(0.065, now); // ~15 second swell cycle
+
+      this.windLfoGain = this.ctx.createGain();
+      this.windLfoGain.gain.setValueAtTime(0.015, now);
+
+      this.windGain = this.ctx.createGain();
+      this.windGain.gain.setValueAtTime(0.045, now);
+
+      this.windLfo.connect(this.windLfoGain);
+      this.windLfoGain.connect(this.windGain.gain);
+      this.windLfo.start();
+
+      this.windSource.connect(this.windFilter);
+      this.windFilter.connect(this.windLowpass);
+      this.windLowpass.connect(this.windGain);
+      this.windGain.connect(this.ambienceBus);
+
+      this.windSource.start();
+    }
+
+    // === LAYER 3: RAIN AMBIENCE ===
+    if (this.rainBuffer) {
+      this.rainSource = this.ctx.createBufferSource();
+      this.rainSource.buffer = this.rainBuffer;
+      this.rainSource.loop = true;
+
+      const rainFilter = this.ctx.createBiquadFilter();
+      rainFilter.type = 'bandpass';
+      rainFilter.frequency.setValueAtTime(1800, now);
+      rainFilter.Q.setValueAtTime(0.85, now);
+
+      this.rainGain = this.ctx.createGain();
+      this.rainGain.gain.setValueAtTime(0.022, now);
+
+      this.rainSource.connect(rainFilter);
+      rainFilter.connect(this.rainGain);
+      this.rainGain.connect(this.ambienceBus);
+
+      this.rainSource.start();
+    }
+  }
+
+  /**
+   * HEARTBEAT SYSTEM:
+   * Anatomical double-beat engine with gentle sine thumps (zero distortion).
+   */
+  private setupHeartbeatEngine(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    this.heartbeatGain = this.ctx.createGain();
+    this.heartbeatGain.gain.setValueAtTime(0.0, this.ctx.currentTime);
+    this.heartbeatGain.connect(this.sfxBus);
+
+    this.startHeartbeatLoop();
+  }
+
+  private startHeartbeatLoop(): void {
+    if (this.isHeartbeatRunning) return;
+    this.isHeartbeatRunning = true;
+
+    const tickHeartbeat = () => {
+      if (!this.isHeartbeatRunning || !this.ctx) return;
+
+      if (this.heartbeatTargetVol > 0.005 && this.currentMode === 'GAMEPLAY') {
+        this.playSingleHeartbeatPulse(this.heartbeatTargetVol);
+      }
+
+      const intervalMs = Math.max(550, (60 / this.heartbeatBpm) * 1000);
+      this.heartbeatIntervalId = setTimeout(tickHeartbeat, intervalMs);
+    };
+
+    tickHeartbeat();
+  }
+
+  private playSingleHeartbeatPulse(volume: number): void {
+    if (!this.ctx || !this.heartbeatGain) return;
+    const now = this.ctx.currentTime;
+
+    // 1. "Lub" — Primary pulse
+    const osc1 = this.ctx.createOscillator();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(52, now);
+    osc1.frequency.exponentialRampToValueAtTime(36, now + 0.08);
+
+    const gain1 = this.ctx.createGain();
+    gain1.gain.setValueAtTime(0.0001, now);
+    gain1.gain.linearRampToValueAtTime(volume * 0.7, now + 0.015);
+    gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+    osc1.connect(gain1);
+    gain1.connect(this.heartbeatGain);
+    osc1.start(now);
+    osc1.stop(now + 0.13);
+
+    // 2. "Dub" — Secondary recoil
+    const t2 = now + 0.11;
+    const osc2 = this.ctx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(58, t2);
+    osc2.frequency.exponentialRampToValueAtTime(38, t2 + 0.07);
+
+    const gain2 = this.ctx.createGain();
+    gain2.gain.setValueAtTime(0.0001, t2);
+    gain2.gain.linearRampToValueAtTime(volume * 0.5, t2 + 0.012);
+    gain2.gain.exponentialRampToValueAtTime(0.0001, t2 + 0.10);
+
+    osc2.connect(gain2);
+    gain2.connect(this.heartbeatGain);
+    osc2.start(t2);
+    osc2.stop(t2 + 0.11);
+  }
+
+  // =========================================================================
+  // 3D POSITIONAL AUDIO ENGINE (Relative to Player Camera)
+  // =========================================================================
+
+  public updateListener(
+    cameraPos: { x: number; y: number; z: number },
+    cameraForward: { x: number; y: number; z: number },
+    isMoving: boolean
+  ): void {
+    this.listenerPos.x = cameraPos.x;
+    this.listenerPos.y = cameraPos.y;
+    this.listenerPos.z = cameraPos.z;
+
+    this.listenerForward.x = cameraForward.x;
+    this.listenerForward.y = cameraForward.y;
+    this.listenerForward.z = cameraForward.z;
+
+    this.isPlayerMoving = isMoving;
+    this.checkStalkerFootstepTrigger();
+  }
+
+  public getSpatialParams(worldX: number, worldY: number, worldZ: number): SpatialAudioParams {
+    const dx = worldX - this.listenerPos.x;
+    const dy = worldY - this.listenerPos.y;
+    const dz = worldZ - this.listenerPos.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    const lx = this.listenerForward.x;
+    const lz = this.listenerForward.z;
+
+    // Projection onto listener's right axis (-lz, lx) and forward axis (lx, lz)
+    const rightProj = dx * (-lz) + dz * lx;
+    const forwardProj = dx * lx + dz * lz;
+
+    const relAngle = Math.atan2(rightProj, forwardProj);
+    const pan = Math.max(-1, Math.min(1, Math.sin(relAngle)));
+    const isBehind = forwardProj < -0.12;
+
+    const filterCutoff = isBehind ? 2400 : 7500;
+    const attenuation = Math.max(0.18, 1.0 / (1.0 + Math.max(0, dist - 1.5) * 0.085));
+
+    return { pan, filterCutoff, attenuation, isBehind };
+  }
+
+  private createPanner(panValue: number): AudioNode {
+    const clampedPan = Math.max(-1, Math.min(1, panValue));
+    if (this.ctx && typeof this.ctx.createStereoPanner === 'function') {
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.setValueAtTime(clampedPan, this.ctx.currentTime);
+      return panner;
+    }
+    return this.ctx!.createGain();
+  }
+
+  // =========================================================================
+  // GATE PROXIMITY & TENSION CONTROLLER (Strict 30m / 20m / 12m / 8m / 5m / 3m stages)
+  // =========================================================================
+
+  public updateGateProximity(distanceToGate: number): void {
+    this.currentDistanceToGate = distanceToGate;
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    if (now - this.lastTensionUpdate < 0.15) return;
+    this.lastTensionUpdate = now;
+
+    // 30m+ : Normal atmosphere
+    if (distanceToGate >= 28) {
+      this.heartbeatTargetVol = 0;
+      this.heartbeatBpm = 50;
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.5);
+      if (this.windFilter) this.windFilter.frequency.setTargetAtTime(300, now, 1.0);
+    }
+    // 20m : Subtle wind and distant sounds
+    else if (distanceToGate >= 18) {
+      this.heartbeatTargetVol = 0;
+      this.heartbeatBpm = 52;
+      const t = 1 - (distanceToGate - 18) / 10;
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.5);
+      if (this.windFilter) this.windFilter.frequency.setTargetAtTime(340 + t * 40, now, 0.9);
+    }
+    // 12m : Slightly stronger environmental tension
+    else if (distanceToGate >= 10) {
+      const t = 1 - (distanceToGate - 10) / 8;
+      this.heartbeatTargetVol = 0.008 + t * 0.008; // very subtle, barely noticeable
+      this.heartbeatBpm = 56 + t * 6;
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.5);
+      if (this.windFilter) this.windFilter.frequency.setTargetAtTime(380, now, 0.8);
+    }
+    // 8m : Occasional heartbeat audible
+    else if (distanceToGate >= 6) {
+      const t = 1 - (distanceToGate - 6) / 4;
+      this.heartbeatTargetVol = 0.018 + t * 0.010;
+      this.heartbeatBpm = 62 + t * 8;
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.5);
+      if (this.windFilter) this.windFilter.frequency.setTargetAtTime(410, now, 0.6);
+    }
+    // 5m : Subtle breathing / metal creak
+    else if (distanceToGate >= 3.5) {
+      const t = 1 - (distanceToGate - 3.5) / 2.5;
+      this.heartbeatTargetVol = 0.028 + t * 0.010;
+      this.heartbeatBpm = 72 + t * 8;
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.5);
+      if (this.windFilter) this.windFilter.frequency.setTargetAtTime(440, now, 0.5);
+    }
+    // 3m : Strong psychological tension
+    else if (distanceToGate >= 2.4) {
+      const t = 1 - (distanceToGate - 2.4) / 1.1;
+      this.heartbeatTargetVol = 0.040 + t * 0.012;
+      this.heartbeatBpm = 82 + t * 8;
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.5);
+      if (this.windFilter) this.windFilter.frequency.setTargetAtTime(480, now, 0.4);
+    }
+    // Very close (< 2.4m) : Brief silence / vacuum before interaction
+    else {
+      this.heartbeatTargetVol = 0.032;
+      this.heartbeatBpm = 76;
+      // Gentle atmospheric duck creating psychological vacuum
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.5);
+      if (this.windFilter) this.windFilter.frequency.setTargetAtTime(320, now, 0.5);
+    }
+  }
+
+  // =========================================================================
+  // FOOTSTEPS BEHIND THE PLAYER (Psychological Effect)
+  // =========================================================================
+
+  private checkStalkerFootstepTrigger(): void {
+    if (!this.isPlayerMoving || this.currentMode !== 'GAMEPLAY') return;
+
+    const now = Date.now();
+    if (now - this.lastStalkerFootstepTime < 45000) return;
+
+    if (Math.random() < 0.25) {
+      this.lastStalkerFootstepTime = now;
+      this.triggerStalkerFootstepsBehind();
+    } else {
+      this.lastStalkerFootstepTime = now - 18000;
+    }
+  }
+
+  public triggerStalkerFootstepsBehind(): void {
+    if (!this.ctx || this.currentMode !== 'GAMEPLAY') return;
+
+    const pos1 = {
+      x: this.listenerPos.x - this.listenerForward.x * 4.0 - 0.4,
+      y: 0,
+      z: this.listenerPos.z - this.listenerForward.z * 4.0,
+    };
+    this.playSpatialFootstep(pos1.x, pos1.y, pos1.z, 0.026);
+
+    setTimeout(() => {
+      if (!this.ctx || this.currentMode !== 'GAMEPLAY') return;
+      const pos2 = {
+        x: this.listenerPos.x - this.listenerForward.x * 3.2 + 0.3,
+        y: 0,
+        z: this.listenerPos.z - this.listenerForward.z * 3.2,
+      };
+      this.playSpatialFootstep(pos2.x, pos2.y, pos2.z, 0.022);
+    }, 1100);
+  }
+
+  public playSpatialFootstep(x: number, y: number, z: number, baseVol = 0.028): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const spatial = this.getSpatialParams(x, y, z);
+    const surface = this.getSurfaceTypeAtPosition(x, y, z);
+
+    let buffers = this.gravelStepBuffers;
+    if (surface === 'LEAVES' && this.leavesStepBuffers.length > 0) buffers = this.leavesStepBuffers;
+    else if (surface === 'WOOD' && this.woodStepBuffers.length > 0) buffers = this.woodStepBuffers;
+    else if (surface === 'STONE' && this.stoneStepBuffers.length > 0) buffers = this.stoneStepBuffers;
+    else if (this.footstepBuffers.length > 0) buffers = this.footstepBuffers;
+
+    if (buffers.length > 0) {
+      const buf = buffers[Math.floor(Math.random() * buffers.length)];
+      const source = this.ctx.createBufferSource();
+      source.buffer = buf;
+      source.playbackRate.setValueAtTime(0.94 + Math.random() * 0.08, now);
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = surface === 'LEAVES' ? 'bandpass' : 'lowpass';
+      if (surface === 'LEAVES') {
+        filter.frequency.setValueAtTime(Math.min(spatial.filterCutoff * 1.4, 3600), now);
+        filter.Q.setValueAtTime(1.1, now);
+      } else if (surface === 'WOOD') {
+        filter.frequency.setValueAtTime(Math.min(spatial.filterCutoff, 1400), now);
+        filter.Q.setValueAtTime(1.8, now);
+      } else {
+        filter.frequency.setValueAtTime(spatial.filterCutoff, now);
+      }
+
+      const gain = this.ctx.createGain();
+      const finalVol = baseVol * spatial.attenuation * (surface === 'LEAVES' ? 1.2 : 1.0);
+      gain.gain.setValueAtTime(finalVol, now);
+
+      const panner = this.createPanner(spatial.pan);
+
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(panner);
+      panner.connect(this.sfxBus);
+
+      source.start(now);
+    } else if (this.pinkNoiseBuffer) {
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = this.pinkNoiseBuffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(spatial.isBehind ? 650 : 920, now);
+      filter.Q.setValueAtTime(2.2, now);
+
+      const gain = this.ctx.createGain();
+      const stepVol = baseVol * spatial.attenuation;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(stepVol, now + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
+      const panner = this.createPanner(spatial.pan);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(panner);
+      panner.connect(this.sfxBus);
+
+      noise.start(now);
+      noise.stop(now + 0.18);
+    }
+  }
+
+  // =========================================================================
+  // WHISPER & BREATHING SYSTEM (Subtle, Clean)
+  // =========================================================================
+
+  public playSubtleWhisper(direction: 'LEFT' | 'RIGHT' | 'BEHIND' | 'DISTANT' = 'BEHIND'): void {
+    if (!this.ctx || !this.sfxBus || !this.pinkNoiseBuffer) return;
+    const now = this.ctx.currentTime;
+
+    let pan = 0;
+    let filterCutoff = 2000;
+    let peakGain = 0.016; // Whisper quiet
+
+    if (direction === 'LEFT') {
+      pan = -0.80;
+      filterCutoff = 3200;
+    } else if (direction === 'RIGHT') {
+      pan = 0.80;
+      filterCutoff = 3200;
+    } else if (direction === 'BEHIND') {
+      pan = 0.05;
+      filterCutoff = 1900;
+    } else {
+      pan = Math.random() * 1.2 - 0.6;
+      peakGain = 0.012;
+      filterCutoff = 1600;
+    }
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.pinkNoiseBuffer;
+
+    const formant1 = this.ctx.createBiquadFilter();
+    formant1.type = 'bandpass';
+    formant1.frequency.setValueAtTime(680 + Math.random() * 60, now);
+    formant1.Q.setValueAtTime(4.5, now);
+    formant1.frequency.linearRampToValueAtTime(1020, now + 1.8);
+
+    const headFilter = this.ctx.createBiquadFilter();
+    headFilter.type = 'lowpass';
+    headFilter.frequency.setValueAtTime(filterCutoff, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(peakGain, now + 0.6);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 2.0);
+
+    const panner = this.createPanner(pan);
+
+    source.connect(formant1);
+    formant1.connect(headFilter);
+    headFilter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    source.start(now);
+    source.stop(now + 2.1);
+  }
+
+  public playFaintBreathing(pan = 0.35): void {
+    if (!this.ctx || !this.sfxBus || !this.pinkNoiseBuffer) return;
+    const now = this.ctx.currentTime;
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.pinkNoiseBuffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(680, now);
+    filter.Q.setValueAtTime(2.2, now);
+    filter.frequency.linearRampToValueAtTime(420, now + 1.6);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.016, now + 1.0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.8);
+
+    const panner = this.createPanner(pan);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    source.start(now);
+    source.stop(now + 1.9);
+  }
+
+  // =========================================================================
+  // LIGHTNING + THUNDER SYSTEM (Dynamic Delays & Zero Distortion)
+  // =========================================================================
+
+  public triggerLightningThunder(isCloser = Math.random() < 0.25): void {
+    const delayMs = isCloser
+      ? Math.floor(Math.random() * 1200 + 600)   // 0.6s - 1.8s
+      : Math.floor(Math.random() * 2000 + 1500); // 1.5s - 3.5s
+
+    this.playCinematicThunder(delayMs, isCloser);
+  }
+
+  /**
+   * Distant or Closer Thunder with smooth lowpass roll-off and zero clipping.
+   */
+  public playCinematicThunder(delayMs: number = 0, isCloser = false): void {
+    if (!this.ctx || !this.sfxBus || !this.brownNoiseBuffer) return;
+
+    setTimeout(() => {
+      if (!this.ctx || !this.sfxBus || !this.brownNoiseBuffer) return;
+      const now = this.ctx.currentTime;
+      const panVal = Math.random() * 0.9 - 0.45;
+
+      const subPeakVol = isCloser ? 0.085 : 0.055;
+      const noisePeakVol = isCloser ? 0.075 : 0.045;
+      const duration = isCloser ? 4.2 : 5.4;
+
+      // 1. Warm Sub-Bass Rumble Body (Sine wave with gradual 100ms attack to avoid clicks)
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(isCloser ? 58 : 46, now);
+      osc.frequency.exponentialRampToValueAtTime(32, now + 3.8);
+
+      const oscGain = this.ctx.createGain();
+      oscGain.gain.setValueAtTime(0.0001, now);
+      oscGain.gain.linearRampToValueAtTime(subPeakVol, now + 0.14);
+      oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 4.2);
+
+      const panner = this.createPanner(panVal);
+
+      osc.connect(oscGain);
+      oscGain.connect(panner);
+      panner.connect(this.sfxBus);
+
+      osc.start(now);
+      osc.stop(now + 4.3);
+
+      // 2. Diffuse Sky Rumble (Gentle lowpass brown noise)
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = this.brownNoiseBuffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(isCloser ? 140 : 95, now);
+      filter.frequency.linearRampToValueAtTime(38, now + duration - 0.5);
+
+      const noiseGain = this.ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.0001, now);
+      noiseGain.gain.linearRampToValueAtTime(noisePeakVol, now + (isCloser ? 0.20 : 0.35));
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+      noise.connect(filter);
+      filter.connect(noiseGain);
+      noiseGain.connect(panner);
+
+      noise.start(now);
+      noise.stop(now + duration + 0.1);
+    }, delayMs);
+  }
+
+  public playDistantThunder(delayMs: number = 0): void {
+    this.playCinematicThunder(delayMs, false);
+  }
+
+  // =========================================================================
+  // HOUSE / ENVIRONMENT SOUNDS (Spatialized & Organic)
+  // =========================================================================
+
+  public playGateCreak(intensity: number = 0.5): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const spatial = this.getSpatialParams(0, 2.5, -22);
+
+    const osc1 = this.ctx.createOscillator();
+    osc1.type = 'sine';
+
+    const baseFreq = 320 + Math.random() * 50;
+    osc1.frequency.setValueAtTime(baseFreq, now);
+    osc1.frequency.exponentialRampToValueAtTime(baseFreq * 1.18, now + 0.3);
+    osc1.frequency.exponentialRampToValueAtTime(baseFreq * 0.92, now + 0.9);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(620, now);
+    filter.Q.setValueAtTime(2.5, now);
+
+    const gain = this.ctx.createGain();
+    const peakGain = (0.024 + intensity * 0.028) * spatial.attenuation;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(peakGain, now + 0.2);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.1);
+
+    const panner = this.createPanner(spatial.pan);
+
+    osc1.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc1.start(now);
+    osc1.stop(now + 1.15);
+  }
+
+  /**
+   * FAINT METALLIC CHAIN SOUND:
+   * Multi-link iron rattle coming from the gate padlock.
+   */
+  public playMetallicChainClink(intensity: number = 0.5): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const spatial = this.getSpatialParams(0, 2.8, -22);
+
+    // 2-3 fast metallic clinks simulating chain links striking
+    const numLinks = 2 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < numLinks; i++) {
+      setTimeout(() => {
+        if (!this.ctx || !this.sfxBus) return;
+        const now = this.ctx.currentTime;
+
+        const osc = this.ctx.createOscillator();
+        osc.type = 'triangle';
+        const linkPitch = 1200 + i * 260 + (Math.random() * 120 - 60);
+        osc.frequency.setValueAtTime(linkPitch, now);
+        osc.frequency.exponentialRampToValueAtTime(linkPitch * 0.65, now + 0.12);
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1400, now);
+        filter.Q.setValueAtTime(4.0, now);
+
+        const gain = this.ctx.createGain();
+        const linkVol = (0.018 + intensity * 0.022) * spatial.attenuation;
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(linkVol, now + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+
+        const panner = this.createPanner(spatial.pan);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(panner);
+        panner.connect(this.sfxBus);
+
+        osc.start(now);
+        osc.stop(now + 0.20);
+      }, i * (75 + Math.random() * 45));
+    }
+  }
+
+  public playGateChainRattle(intensity: number = 0.5): void {
+    this.playMetallicChainClink(intensity);
+  }
+
+  /**
+   * FIRST SCARE SEQUENCE (Step 1): Quiet Metallic Chain Sound
+   * Very slow, subtle sound of hanging iron chain links swaying and rubbing against iron bars.
+   * Clean, quiet, and spatialized at the gate.
+   */
+  public playQuietChainShift(): void {
+    if (!this.ctx || !this.sfxBus || !this.pinkNoiseBuffer) return;
+    const now = this.ctx.currentTime;
+    const spatial = this.getSpatialParams(0, 2.85, -22);
+
+    // 1. Soft metallic friction/scrape (pink noise shaped by narrow resonant bandpass)
+    const noiseSource = this.ctx.createBufferSource();
+    noiseSource.buffer = this.pinkNoiseBuffer;
+
+    const scrapeFilter = this.ctx.createBiquadFilter();
+    scrapeFilter.type = 'bandpass';
+    scrapeFilter.frequency.setValueAtTime(1450, now);
+    scrapeFilter.Q.setValueAtTime(5.5, now);
+
+    const scrapeGain = this.ctx.createGain();
+    const peakScrape = 0.014 * spatial.attenuation;
+    scrapeGain.gain.setValueAtTime(0.0001, now);
+    scrapeGain.gain.linearRampToValueAtTime(peakScrape, now + 0.4);
+    scrapeGain.gain.linearRampToValueAtTime(peakScrape * 0.35, now + 1.0);
+    scrapeGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.9);
+
+    const panner = this.createPanner(spatial.pan);
+
+    noiseSource.connect(scrapeFilter);
+    scrapeFilter.connect(scrapeGain);
+    scrapeGain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    noiseSource.start(now);
+    noiseSource.stop(now + 2.0);
+
+    // 2. Subtle iron link resonance clicks
+    [0.25, 0.75, 1.25].forEach((delay, idx) => {
+      setTimeout(() => {
+        if (!this.ctx || !this.sfxBus) return;
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sine';
+        const pitch = 880 + idx * 160 + (Math.random() * 40 - 20);
+        osc.frequency.setValueAtTime(pitch, t);
+        osc.frequency.exponentialRampToValueAtTime(pitch * 0.68, t + 0.12);
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1250, t);
+        filter.Q.setValueAtTime(4.5, t);
+
+        const linkGain = this.ctx.createGain();
+        const linkVol = 0.010 * spatial.attenuation;
+        linkGain.gain.setValueAtTime(0.0001, t);
+        linkGain.gain.linearRampToValueAtTime(linkVol, t + 0.006);
+        linkGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+
+        const linkPanner = this.createPanner(spatial.pan);
+
+        osc.connect(filter);
+        filter.connect(linkGain);
+        linkGain.connect(linkPanner);
+        linkPanner.connect(this.sfxBus);
+
+        osc.start(t);
+        osc.stop(t + 0.16);
+      }, delay * 1000);
+    });
+  }
+
+  /**
+   * FIRST SCARE SEQUENCE (Step 2): Subtle Padlock Shake Clink
+   * A single, realistic, tiny metallic "clink" as the padlock shackle shifts against the body.
+   */
+  public playSubtlePadlockClink(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const spatial = this.getSpatialParams(0, 3.15, -22);
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(2280, now);
+    osc.frequency.exponentialRampToValueAtTime(1380, now + 0.08);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1980, now);
+    filter.Q.setValueAtTime(8.0, now);
+
+    const gain = this.ctx.createGain();
+    const clinkVol = 0.022 * spatial.attenuation;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(clinkVol, now + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+
+    const panner = this.createPanner(spatial.pan);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.13);
+  }
+
+  /**
+   * FIRST SCARE SEQUENCE (Step 3 & 5): Psychological Silence
+   * Reduces environmental ambience down to very low, pauses heartbeat & random horror triggers,
+   * keeping only faint wind/rain whisper.
+   */
+  public setPsychologicalSilence(enable: boolean, durationSec = 1.2): void {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    if (enable) {
+      if (this.droneGain) {
+        this.droneGain.gain.cancelScheduledValues(now);
+        this.droneGain.gain.linearRampToValueAtTime(0.0001, now + durationSec);
+      }
+      if (this.windGain) {
+        this.windGain.gain.cancelScheduledValues(now);
+        this.windGain.gain.linearRampToValueAtTime(0.006, now + durationSec);
+      }
+      if (this.rainGain) {
+        this.rainGain.gain.cancelScheduledValues(now);
+        this.rainGain.gain.linearRampToValueAtTime(0.005, now + durationSec);
+      }
+      this.heartbeatTargetVol = 0;
+    } else {
+      // Smooth restoration to normal ambience over 3.5 seconds
+      if (this.droneGain) {
+        this.droneGain.gain.cancelScheduledValues(now);
+        this.droneGain.gain.setValueAtTime(0.0, now);
+      }
+      if (this.windGain) {
+        this.windGain.gain.cancelScheduledValues(now);
+        this.windGain.gain.linearRampToValueAtTime(0.045, now + 3.5);
+      }
+      if (this.rainGain) {
+        this.rainGain.gain.cancelScheduledValues(now);
+        this.rainGain.gain.linearRampToValueAtTime(0.022, now + 3.5);
+      }
+    }
+  }
+
+  /**
+   * FIRST SCARE SEQUENCE (Step 6): Human-like Whisper Directly Behind Player
+   * Positional 3D binaural whisper directly behind the player's neck.
+   * Extremely subtle, clean, zero clipping, no scream. Gives the chilling feeling:
+   * "someone is standing right behind me."
+   */
+  public playCloseWhisperBehind(): void {
+    if (!this.ctx || !this.sfxBus || !this.pinkNoiseBuffer) return;
+    const now = this.ctx.currentTime;
+    const whisperDuration = 1.9;
+
+    // Place sound origin directly behind the player (2.0m back) with slight natural ear bias
+    const earBias = Math.random() > 0.5 ? -0.25 : 0.25;
+
+    // Dual-ear binaural simulation placed directly behind listener
+    [earBias - 0.15, earBias + 0.15].forEach((panVal, earIdx) => {
+      if (!this.ctx || !this.sfxBus) return;
+      const source = this.ctx.createBufferSource();
+      source.buffer = this.pinkNoiseBuffer;
+
+      // Vocal formant 1 (chest/throat resonance)
+      const formant1 = this.ctx.createBiquadFilter();
+      formant1.type = 'bandpass';
+      formant1.frequency.setValueAtTime(650, now);
+      formant1.Q.setValueAtTime(5.2, now);
+      formant1.frequency.linearRampToValueAtTime(490, now + whisperDuration);
+
+      // Vocal formant 2 (oral vowel shaping "...shhh... leave...")
+      const formant2 = this.ctx.createBiquadFilter();
+      formant2.type = 'bandpass';
+      formant2.frequency.setValueAtTime(1520, now);
+      formant2.Q.setValueAtTime(6.0, now);
+      formant2.frequency.linearRampToValueAtTime(1320, now + whisperDuration);
+
+      // Human head shadow attenuation from rear (lowpass 2400Hz)
+      const rearFilter = this.ctx.createBiquadFilter();
+      rearFilter.type = 'lowpass';
+      rearFilter.frequency.setValueAtTime(2400, now);
+
+      const gain = this.ctx.createGain();
+      const earGain = 0.020; // Subtle, non-intrusive whisper loudness
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(earGain, now + 0.35);
+      gain.gain.setValueAtTime(earGain * 0.85, now + 0.95);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + whisperDuration);
+
+      const panner = this.createPanner(panVal);
+
+      source.connect(formant1);
+      formant1.connect(formant2);
+      formant2.connect(rearFilter);
+      rearFilter.connect(gain);
+      gain.connect(panner);
+      panner.connect(this.sfxBus);
+
+      // Inter-aural time difference (0.35ms)
+      const delay = earIdx === 0 ? 0 : 0.00035;
+      source.start(now + delay);
+      source.stop(now + whisperDuration + 0.1);
+    });
+  }
+
+
+  /**
+   * TREE BRANCH BREAKING (Outside player's direct view)
+   */
+  public playTreeBranchSnap(pan = Math.random() > 0.5 ? 0.75 : -0.75): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Initial sharp woody fracture pop
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(280, now);
+    osc.frequency.exponentialRampToValueAtTime(70, now + 0.045);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(680, now);
+    filter.Q.setValueAtTime(1.8, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.038, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+
+    const panner = this.createPanner(pan);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.07);
+
+    // 2. Light following rustle of falling pine needles/leaves
+    setTimeout(() => {
+      this.playTreeBranchRustle(pan);
+    }, 40);
+  }
+
+  /**
+   * DISTANT METAL SOUND / IMPACT
+   */
+  public playDistantMetalClang(pan = Math.random() * 1.2 - 0.6): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(260, now);
+    osc.frequency.exponentialRampToValueAtTime(195, now + 1.2);
+
+    const oscHarmonic = this.ctx.createOscillator();
+    oscHarmonic.type = 'triangle';
+    oscHarmonic.frequency.setValueAtTime(540, now);
+    oscHarmonic.frequency.exponentialRampToValueAtTime(390, now + 0.8);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(480, now);
+    filter.Q.setValueAtTime(3.0, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.022, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.6);
+
+    const panner = this.createPanner(pan);
+
+    osc.connect(filter);
+    oscHarmonic.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    oscHarmonic.start(now);
+    osc.stop(now + 1.7);
+    oscHarmonic.stop(now + 1.7);
+  }
+
+  public playTreeBranchRustle(pan = 0): void {
+    if (!this.ctx || !this.sfxBus || !this.pinkNoiseBuffer) return;
+    const now = this.ctx.currentTime;
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.pinkNoiseBuffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(420, now);
+    filter.Q.setValueAtTime(1.5, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.024, now + 0.5);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.6);
+
+    const panner = this.createPanner(pan);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    source.start(now);
+    source.stop(now + 1.7);
+  }
+
+  public playUnexplainedNoise(pan = 0): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(78, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 2.2);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(110, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.028, now + 0.7);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 2.3);
+
+    const panner = this.createPanner(pan);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 2.4);
+  }
+
+  public playDistantKnock(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const spatial = this.getSpatialParams(2, 3, -42);
+
+    for (let k = 0; k < 3; k++) {
+      setTimeout(() => {
+        if (!this.ctx || !this.sfxBus) return;
+        const now = this.ctx.currentTime;
+
+        const osc = this.ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(120, now);
+        osc.frequency.exponentialRampToValueAtTime(60, now + 0.07);
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(240, now);
+        filter.Q.setValueAtTime(3.5, now);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(0.026 * spatial.attenuation, now + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+        const panner = this.createPanner(spatial.pan);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(panner);
+        panner.connect(this.sfxBus);
+
+        osc.start(now);
+        osc.stop(now + 0.14);
+      }, k * 280);
+    }
+  }
+
+  public playHouseCreak(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    const startFreq = 135 + Math.random() * 25;
+    osc.frequency.setValueAtTime(startFreq, now);
+    osc.frequency.linearRampToValueAtTime(startFreq - 12, now + 0.8);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(240, now);
+    filter.Q.setValueAtTime(2.8, now);
+
+    const panner = this.createPanner(Math.random() * 1.2 - 0.6);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.026, now + 0.16);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.9);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.95);
+  }
+
+  public triggerRandomWindGust(): void {
+    if (!this.ctx || !this.windFilter || !this.windGain) return;
+    const now = this.ctx.currentTime;
+
+    this.windFilter.frequency.setTargetAtTime(450, now, 1.2);
+    this.windFilter.frequency.setTargetAtTime(320, now + 3.2, 1.8);
+
+    this.windGain.gain.setTargetAtTime(0.075, now, 1.2);
+    this.windGain.gain.setTargetAtTime(0.045, now + 3.2, 1.8);
+  }
+
+  /**
+   * HAUNTED PASSAGE: Brittle old paper rustling when inspecting or brushing past a poster.
+   */
+  public playPaperRustle(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const bufferSize = this.ctx.sampleRate * 0.28;
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.35));
+    }
+
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1800, now);
+    filter.Q.setValueAtTime(2.2, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.038, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.sfxBus);
+
+    noise.start(now);
+  }
+
+  /**
+   * HAUNTED PASSAGE: Distant cold water drop echoing between claustrophobic stone walls.
+   */
+  public playWaterDrop(pan = Math.random() * 1.4 - 0.7): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    const dropFreq = 950 + Math.random() * 320;
+    osc.frequency.setValueAtTime(dropFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(dropFreq + 450, now + 0.04);
+    osc.frequency.exponentialRampToValueAtTime(dropFreq - 200, now + 0.12);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.024, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+
+    const panner = this.createPanner(pan);
+
+    osc.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
+  /**
+   * HAUNTED PASSAGE: Low structural groan of aged stone and mortar shifting.
+   */
+  public playWallCreak(pan = 0): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(68 + Math.random() * 14, now);
+    osc.frequency.linearRampToValueAtTime(54, now + 0.9);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(160, now);
+    filter.Q.setValueAtTime(4.0, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.025, now + 0.2);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.95);
+
+    const panner = this.createPanner(pan);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 1.0);
+  }
+
+  /**
+   * HAUNTED PASSAGE: Wind whistling down the narrow passage.
+   */
+  public playPassageWindGust(): void {
+    if (!this.ctx || !this.windFilter || !this.windGain) return;
+    const now = this.ctx.currentTime;
+
+    this.windFilter.frequency.setTargetAtTime(580, now, 0.8);
+    this.windFilter.frequency.setTargetAtTime(310, now + 2.5, 1.4);
+
+    this.windGain.gain.setTargetAtTime(0.09, now, 0.8);
+    this.windGain.gain.setTargetAtTime(0.04, now + 2.5, 1.4);
+  }
+
+  // =========================================================================
+  // SILENCE / TENSION SYSTEM & RANDOM HORROR EVENTS
+  // =========================================================================
+
+  private startEventManager(): void {
+    if (this.isEventManagerRunning) return;
+    this.isEventManagerRunning = true;
+
+    const scheduleNextEvent = () => {
+      if (!this.isEventManagerRunning || !this.ctx) return;
+
+      // Generous, unpredictable silent intervals (24 - 46 seconds gap)
+      const delay = Math.random() * 22000 + 24000;
+
+      this.eventTimeoutId = setTimeout(() => {
+        if (!this.isEventManagerRunning || !this.ctx) return;
+
+        if (this.currentMode === 'GAMEPLAY' && !this.isDucked) {
+          this.triggerRandomHorrorEvent();
+        }
+
+        scheduleNextEvent();
+      }, delay);
+    };
+
+    scheduleNextEvent();
+  }
+
+  private triggerRandomHorrorEvent(): void {
+    const roll = Math.random();
+
+    // Psychological silence tension
+    if (roll < 0.14) {
+      this.triggerSilenceBeforeScare();
+      return;
+    }
+
+    if (roll < 0.24) {
+      this.triggerRandomWindGust();
+    } else if (roll < 0.34) {
+      // Tree branch snap outside direct line of sight (pan left or right)
+      this.playTreeBranchSnap(Math.random() > 0.5 ? 0.85 : -0.85);
+    } else if (roll < 0.44) {
+      // Faint metallic chain rattle from the gate
+      this.playMetallicChainClink(0.4);
+    } else if (roll < 0.54) {
+      // Footstep slightly behind player
+      const stepX = this.listenerPos.x + (Math.random() > 0.5 ? 2.5 : -2.5);
+      const stepZ = this.listenerPos.z + 3.8;
+      this.playSpatialFootstep(stepX, 0, stepZ, 0.022);
+    } else if (roll < 0.64) {
+      // Whisper specifically panned to left, right, or behind
+      const dirRoll = Math.random();
+      const dir = dirRoll < 0.35 ? 'LEFT' : dirRoll < 0.7 ? 'RIGHT' : 'BEHIND';
+      this.playSubtleWhisper(dir);
+    } else if (roll < 0.74) {
+      // Occasional breathing sound from behind
+      this.playFaintBreathing(0.05);
+    } else if (roll < 0.82) {
+      // Distant metal echo across grounds
+      this.playDistantMetalClang(Math.random() * 1.4 - 0.7);
+    } else if (roll < 0.90) {
+      // Very distant knocking from bungalow
+      this.playDistantKnock();
+    } else if (roll < 0.96) {
+      this.playGateCreak(0.35);
+    } else {
+      this.triggerLightningThunder();
+    }
+  }
+
+  private triggerSilenceBeforeScare(): void {
+    if (!this.ctx || !this.ambienceBus) return;
+    const now = this.ctx.currentTime;
+
+    this.ambienceBus.gain.setTargetAtTime(this.musicVolume * 0.20, now, 0.8);
+
+    setTimeout(() => {
+      if (!this.ctx || this.currentMode !== 'GAMEPLAY') return;
+
+      const cueRoll = Math.random();
+      if (cueRoll < 0.35) {
+        this.playSubtleWhisper('BEHIND');
+      } else if (cueRoll < 0.65) {
+        this.playDistantKnock();
+      } else {
+        this.playGateCreak(0.3);
+      }
+
+      setTimeout(() => {
+        if (!this.ctx || !this.ambienceBus) return;
+        const restNow = this.ctx.currentTime;
+        const targetVol = this.isDucked ? this.musicVolume * 0.35 : this.musicVolume;
+        this.ambienceBus.gain.setTargetAtTime(targetVol, restNow, 1.2);
+      }, 2000);
+    }, 3000);
+  }
+
+  // =========================================================================
+  // PLAYER FOOTSTEPS
+  // =========================================================================
+
+  /**
+   * Determine ground surface material based on player or sound source 3D coordinates.
+   * - WOOD: Bungalow veranda porch, timber boardwalk footbridge, and tree staging platform.
+   * - STONE: Gate granite threshold, bungalow foundation steps, shrine plinth, and alcove.
+   * - GRAVEL: Central estate driveway path (|x| <= 3.8).
+   * - LEAVES: Forest underbrush and overgrown foliage off the main path (|x| > 3.8).
+   */
+  public getSurfaceTypeAtPosition(x: number, y: number, z: number): SurfaceType {
+    // 1. BUNGALOW INTERIOR & ELEVATED STRUCTURES
+    // A. Bungalow Interior (Ground Floor & Second Floor: z <= -58.5)
+    if (z <= -58.5) {
+      // Old Bathroom floor (x in [9.5, 12.5], z in [-78.0, -71.5] on ground floor) has cold stone tiles
+      if (y < 3.5 && x >= 9.5 && x <= 12.5 && z <= -71.5 && z >= -78.0) {
+        return 'STONE';
+      }
+      // Kitchen & Dining Room flagstones (x in [9.5, 12.5], z in [-67.0, -59.0] on ground floor)
+      if (y < 3.5 && x >= 9.5 && x <= 12.5 && z <= -59.0 && z >= -67.0) {
+        return 'STONE';
+      }
+      // Grand Staircase (z in [-75.5, -68.5], |x| <= 1.45) - heavy creaking timber steps
+      if (z <= -68.5 && z >= -75.5 && Math.abs(x) <= 1.45) {
+        return 'WOOD';
+      }
+      // Second floor bedrooms, gallery, and landing: antique parquet and hardwood planks
+      if (y >= 3.5) {
+        return 'WOOD';
+      }
+      // Ground floor living room, foyer, and hallways: polished teak parquet
+      return 'WOOD';
+    }
+
+    // B. Colonial Veranda Entrance Steps (z in [-55.5, -51.5], |x| <= 5.0)
+    // 5 wide stone foundation steps leading onto porch
+    if (z <= -51.5 && z >= -55.5 && Math.abs(x) <= 5.0) {
+      return 'STONE';
+    }
+
+    // C. Veranda Porch Hardwood Decking (z in [-58.5, -53.5], |x| <= 16.0)
+    if (z <= -53.5 && z >= -58.5 && Math.abs(x) <= 16.0) {
+      return 'WOOD';
+    }
+
+    // D. Weathered Timber Footbridge across muddy ditch towards Garden Shrine (x in [-10.8, -5.8], z in [-15.8, -13.0])
+    if (x >= -10.8 && x <= -5.8 && z >= -15.8 && z <= -13.0) {
+      return 'WOOD';
+    }
+
+    // E. Timber Woodcutter Staging Planks near Dead Tree (x in [8.5, 12.0], z in [-15.2, -12.6])
+    if (x >= 8.5 && x <= 12.0 && z >= -15.2 && z <= -12.6) {
+      return 'WOOD';
+    }
+
+    // 2. STONE SURFACES
+    // A. Main Gate Granite Threshold & Pillar Base (z in [-23.4, -20.8], |x| <= 4.2)
+    if (z >= -23.4 && z <= -20.8 && Math.abs(x) <= 4.2) {
+      return 'STONE';
+    }
+    // B. Courtyard stone path around central well/fountain & driveway threshold (z in [-37.0, -32.8], |x| <= 5.0)
+    if (z >= -37.0 && z <= -32.8 && Math.abs(x) <= 5.0) {
+      return 'STONE';
+    }
+    // C. Broken Garden Shrine Stone Plinth & Slabs (x in [-14.8, -11.6], z in [-15.8, -12.6])
+    if (x >= -14.8 && x <= -11.6 && z >= -15.8 && z <= -12.6) {
+      return 'STONE';
+    }
+    // D. Hidden Alcove Stone Shelf & Granite Outcropping (x in [-8.0, -5.6], z in [-20.5, -17.8])
+    if (x >= -8.0 && x <= -5.6 && z >= -20.5 && z <= -17.8) {
+      return 'STONE';
+    }
+
+    // 3. GRAVEL (Central Estate Driveway Path)
+    // Main path width is |x| <= 3.8m from front gate (z = -22) through tree avenue to courtyard (z = -51)
+    if (Math.abs(x) <= 3.8) {
+      return 'GRAVEL';
+    }
+
+    // 4. LEAVES (Deep forest floor, overgrown shrubs, dead autumn foliage, damp mud and roots)
+    return 'LEAVES';
+  }
+
+  public getCurrentSurface(): SurfaceType {
+    return this.currentSurface;
+  }
+
+  public playFootstep(
+    isDistant = false,
+    isRunning = false,
+    pan = 0,
+    position?: { x: number; y: number; z: number },
+    forcedSurface?: SurfaceType
+  ): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const minInterval = isRunning ? 0.12 : 0.15;
+    if (now - this.lastFootstepTime < minInterval) return;
+    this.lastFootstepTime = now;
+
+    const pos = position || this.listenerPos;
+    const surface: SurfaceType = forcedSurface || (pos ? this.getSurfaceTypeAtPosition(pos.x, pos.y, pos.z) : 'GRAVEL');
+    this.currentSurface = surface;
+
+    let buffers = this.gravelStepBuffers;
+    if (surface === 'LEAVES' && this.leavesStepBuffers.length > 0) {
+      buffers = this.leavesStepBuffers;
+    } else if (surface === 'WOOD' && this.woodStepBuffers.length > 0) {
+      buffers = this.woodStepBuffers;
+    } else if (surface === 'STONE' && this.stoneStepBuffers.length > 0) {
+      buffers = this.stoneStepBuffers;
+    } else if (this.footstepBuffers.length > 0) {
+      buffers = this.footstepBuffers;
+    }
+
+    if (buffers.length === 0) return;
+
+    this.stepIndex = (this.stepIndex + 1) % buffers.length;
+    const buffer = buffers[this.stepIndex];
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+
+    // Rate modulation: Running increases cadence/pitch slightly, plus subtle random micro-pitch variation
+    let baseRate = isRunning ? 1.06 : 0.98;
+    if (surface === 'LEAVES') baseRate += 0.02;
+    source.playbackRate.setValueAtTime(
+      baseRate + (Math.random() * 0.06 - 0.03),
+      now
+    );
+
+    // Surface-specific acoustic filtering and dynamics
+    const filter = this.ctx.createBiquadFilter();
+    let vol = 0.034;
+
+    if (surface === 'LEAVES') {
+      // Crisp autumn foliage crunch: allow crisp high-mids through, slight low cut
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(isDistant ? 1200 : (isRunning ? 4400 : 3800), now);
+      filter.Q.setValueAtTime(0.8, now);
+      vol = isDistant ? 0.016 : (isRunning ? 0.046 : 0.036);
+    } else if (surface === 'WOOD') {
+      // Resonant hollow timber floorboards: warm low-mid resonance
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(isDistant ? 420 : (isRunning ? 1600 : 1300), now);
+      filter.Q.setValueAtTime(1.8, now); // boost wood cavity resonance
+      vol = isDistant ? 0.018 : (isRunning ? 0.048 : 0.038);
+    } else if (surface === 'STONE') {
+      // Solid granite click: crisp transient with fast roll-off
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(isDistant ? 450 : (isRunning ? 2800 : 2400), now);
+      filter.Q.setValueAtTime(0.7, now);
+      vol = isDistant ? 0.014 : (isRunning ? 0.040 : 0.030);
+    } else {
+      // GRAVEL: Gritty loose stone grinding
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(isDistant ? 360 : (isRunning ? 2100 : 1700), now);
+      filter.Q.setValueAtTime(1.0, now);
+      vol = isDistant ? 0.015 : (isRunning ? 0.044 : 0.034);
+    }
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(vol, now);
+
+    // Alternating left/right foot stereo panning for true binaural walk feel
+    const footPan = isDistant ? pan : (this.stepIndex % 2 === 0 ? -0.07 : 0.07);
+    const panner = this.createPanner(footPan);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    source.start(now);
+  }
+
+  public playFootstepAtPosition(
+    x: number,
+    y: number,
+    z: number,
+    isRunning = false,
+    isDistant = false,
+    pan = 0
+  ): void {
+    this.playFootstep(isDistant, isRunning, pan, { x, y, z });
+  }
+
+  public playGateProximityTension(distanceNormalized: number): void {
+    this.updateGateProximity(distanceNormalized * 30);
+  }
+
+  // =========================================================================
+  // SCENE & MENU MANAGEMENT
+  // =========================================================================
+
+  public setMode(mode: AudioMode): void {
+    this.currentMode = mode;
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    if (mode === 'MENU') {
+      this.heartbeatTargetVol = 0;
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.6);
+      if (this.windGain) this.windGain.gain.setTargetAtTime(0.038, now, 0.6);
+      if (this.rainGain) this.rainGain.gain.setTargetAtTime(0.001, now, 0.8);
+    } else if (mode === 'GAMEPLAY') {
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.8);
+      if (this.windGain) this.windGain.gain.setTargetAtTime(0.045, now, 0.8);
+      if (this.rainGain) this.rainGain.gain.setTargetAtTime(0.022, now, 1.0);
+    } else if (mode === 'INSPECTING') {
+      this.heartbeatTargetVol = 0.040;
+      this.heartbeatBpm = 76;
+      if (this.droneGain) this.droneGain.gain.setTargetAtTime(0.0, now, 0.5);
+      if (this.windGain) this.windGain.gain.setTargetAtTime(0.055, now, 0.5);
+      if (this.rainGain) this.rainGain.gain.setTargetAtTime(0.018, now, 0.5);
+    }
+  }
+
+  public getBgmTargetVolume(ducked?: boolean): number {
+    if (this.musicVolume <= 0) return 0;
+    const isD = ducked !== undefined ? ducked : this.isDucked;
+    const factor = isD ? 0.35 : 0.85;
+    return Math.min(1.0, Math.max(0, this.musicVolume * factor));
+  }
+
+  public setDuckAmbience(ducked: boolean): void {
+    this.isDucked = ducked;
+    if (this.bgmAudio && !this.isBgmPausedForRoom) {
+      const targetVol = this.getBgmTargetVolume(ducked);
+      this.fadeBgmVolume(targetVol, 150);
+    }
+  }
+
+  /**
+   * Adjusts ONLY background music volume.
+   * If volume is 0, background music is completely silent.
+   * All sound effects continue normally.
+   */
+  public setMusicVolume(volume: number): void {
+    this.musicVolume = Math.max(0, Math.min(1.0, volume));
+    if (this.bgmAudio) {
+      if (this.musicVolume <= 0) {
+        this.bgmAudio.volume = 0;
+      } else if (!this.isBgmPausedForRoom) {
+        const targetVol = this.getBgmTargetVolume();
+        this.fadeBgmVolume(targetVol, 80);
+      }
+    }
+  }
+
+  /**
+   * Adjusts ALL non-music sounds in the entire game:
+   * room sounds, bathroom/store-room sounds, lamp sounds, gate sounds, footsteps,
+   * horror effects, whispers, interaction sounds, wind, rain, and UI.
+   * If volume is 0, ALL sound effects are completely silent.
+   * Background music is unaffected.
+   */
+  public setSfxVolume(volume: number): void {
+    this.sfxVolume = Math.max(0, Math.min(1.0, volume));
+
+    if (this.ctx) {
+      const now = this.ctx.currentTime;
+      if (this.sfxBus) {
+        this.sfxBus.gain.setTargetAtTime(this.sfxVolume, now, 0.02);
+      }
+      if (this.ambienceBus) {
+        this.ambienceBus.gain.setTargetAtTime(this.sfxVolume, now, 0.02);
+      }
+      if (this.uiBus) {
+        this.uiBus.gain.setTargetAtTime(0.40 * this.sfxVolume, now, 0.02);
+      }
+      if (this.storyScoreBus) {
+        this.storyScoreBus.gain.setTargetAtTime(0.80 * this.sfxVolume, now, 0.02);
+      }
+    }
+
+    // Immediately update volume of all SFX HTMLAudioElements
+    const sfxElements = [
+      this.kitchenAudioEl,
+      this.bathroomAudioEl,
+      this.storeRoomAudioEl,
+      this.gateToBungalowAudioEl,
+      this.startingAudioEl,
+      this.gateOpeningAudioEl,
+      this.lampAudioEl,
+      this.secretDoorAudioEl,
+      this.hallAudioEl,
+      this.tvRoomAudioEl,
+    ];
+    sfxElements.forEach((el) => {
+      if (el) {
+        el.volume = Math.max(0, Math.min(1.0, this.sfxVolume));
+      }
+    });
+  }
+
+  public setVolumes(master: number, music: number, sfx: number): void {
+    this.masterVolume = Math.max(0, Math.min(1.0, master));
+    this.setMusicVolume(music);
+    this.setSfxVolume(sfx);
+
+    if (this.ctx && this.masterGain) {
+      const now = this.ctx.currentTime;
+      this.masterGain.gain.setTargetAtTime(this.masterVolume, now, 0.02);
+    }
+  }
+
+  // =========================================================================
+  // OFFICIAL GAME BACKGROUND MUSIC (The_Weight_of_Stone.mp3)
+  // Single-Instance Engine with Smooth Cosine Pause/Resume & Zero Gaps/Clicks
+  // =========================================================================
+
+  public setupBgm(): void {
+    if (typeof window === 'undefined') return;
+    if (!this.bgmAudio) {
+      this.bgmAudio = new Audio('/audio/The_Weight_of_Stone.mp3');
+      this.bgmAudio.loop = true;
+      this.bgmAudio.preload = 'auto';
+      this.bgmAudio.volume = this.getBgmTargetVolume();
+    }
+  }
+
+  /**
+   * Smooth cosine volume fade using requestAnimationFrame.
+   * Completely eliminates pops, clicks, zipper noise, and gap artifacts.
+   */
+  private fadeBgmVolume(targetVolume: number, durationMs: number = 300, onComplete?: () => void): void {
+    if (!this.bgmAudio) {
+      if (onComplete) onComplete();
+      return;
+    }
+
+    if (this.bgmFadeRaf !== null) {
+      cancelAnimationFrame(this.bgmFadeRaf);
+      this.bgmFadeRaf = null;
+    }
+
+    const startVol = this.bgmAudio.volume;
+    if (Math.abs(startVol - targetVolume) < 0.005) {
+      this.bgmAudio.volume = targetVolume;
+      if (onComplete) onComplete();
+      return;
+    }
+
+    const startTime = performance.now();
+    const tick = (now: number) => {
+      if (!this.bgmAudio) return;
+      const elapsed = now - startTime;
+      const progress = Math.min(1.0, elapsed / durationMs);
+      // Cosine ease-in-out: zero derivative at edges for pure continuous click-free transitions
+      const factor = 0.5 - 0.5 * Math.cos(progress * Math.PI);
+      const currentVol = startVol + (targetVolume - startVol) * factor;
+      this.bgmAudio.volume = Math.max(0, Math.min(1.0, currentVol));
+
+      if (progress < 1.0) {
+        this.bgmFadeRaf = requestAnimationFrame(tick);
+      } else {
+        this.bgmAudio.volume = targetVolume;
+        this.bgmFadeRaf = null;
+        if (onComplete) onComplete();
+      }
+    };
+    this.bgmFadeRaf = requestAnimationFrame(tick);
+  }
+
+  /**
+   * Starts The_Weight_of_Stone.mp3 background music when the game begins.
+   * Loops continuously without ending while the player is outside rooms.
+   */
+  public startMainBgm(): void {
+    this.setupBgm();
+    if (!this.bgmAudio) return;
+    this.isBgmPausedForRoom = false;
+    this.activeRoomSounds = 0;
+
+    // Single instance: if already playing smoothly, do not interrupt or restart
+    if (this.isBgmPlaying && !this.bgmAudio.paused) {
+      return;
+    }
+
+    if (this.bgmFadeRaf !== null) {
+      cancelAnimationFrame(this.bgmFadeRaf);
+      this.bgmFadeRaf = null;
+    }
+
+    const targetVol = this.getBgmTargetVolume();
+    this.bgmAudio.volume = targetVol;
+    this.bgmAudio.loop = true;
+    const promise = this.bgmAudio.play();
+    if (promise !== undefined) {
+      promise
+        .then(() => {
+          this.isBgmPlaying = true;
+        })
+        .catch((err) => {
+          console.warn('The_Weight_of_Stone BGM waiting for user gesture:', err);
+        });
+    }
+  }
+
+  /**
+   * Immediately pauses The_Weight_of_Stone.mp3 when any special SFX triggers,
+   * preserving the exact playback position (currentTime) without restarting.
+   */
+  public pauseBgmImmediately(): void {
+    if (this.bgmFadeRaf !== null) {
+      cancelAnimationFrame(this.bgmFadeRaf);
+      this.bgmFadeRaf = null;
+    }
+    this.activeRoomSounds++;
+    this.isBgmPausedForRoom = true;
+    if (this.bgmAudio) {
+      this.bgmAudio.pause();
+      this.isBgmPlaying = false;
+    }
+  }
+
+  /**
+   * Pauses The_Weight_of_Stone.mp3 smoothly when the player enters any room with an existing sound.
+   */
+  public pauseBgmForRoomSound(): void {
+    this.activeRoomSounds++;
+    this.isBgmPausedForRoom = true;
+    if (!this.bgmAudio) return;
+
+    // Smoothly fade down to 0 and pause without sudden cutoff
+    this.fadeBgmVolume(0, 260, () => {
+      if (this.isBgmPausedForRoom && this.bgmAudio) {
+        this.bgmAudio.pause();
+        this.isBgmPlaying = false;
+      }
+    });
+  }
+
+  /**
+   * Resumes The_Weight_of_Stone.mp3 after the room's existing sound finishes.
+   */
+  public resumeBgmAfterRoomSound(): void {
+    if (this.activeRoomSounds > 0) {
+      this.activeRoomSounds--;
+    }
+    if (this.activeRoomSounds <= 0) {
+      this.activeRoomSounds = 0;
+      this.isBgmPausedForRoom = false;
+      this.resumeMainBgm();
+    }
+  }
+
+  /**
+   * Resumes The_Weight_of_Stone.mp3 smoothly from where it left off, looping continuously.
+   */
+  public resumeMainBgm(): void {
+    this.setupBgm();
+    if (!this.bgmAudio) return;
+    if (this.isBgmPausedForRoom) return;
+
+    const targetVol = this.getBgmTargetVolume();
+
+    // Critical: If ALREADY playing smoothly at target volume, do not interrupt
+    if (this.isBgmPlaying && !this.bgmAudio.paused) {
+      if (Math.abs(this.bgmAudio.volume - targetVol) > 0.05) {
+        this.fadeBgmVolume(targetVol, 320);
+      }
+      return;
+    }
+
+    if (this.bgmAudio.paused) {
+      this.bgmAudio.volume = 0; // Start at 0 to guarantee NO initial pop/click
+      const promise = this.bgmAudio.play();
+      if (promise !== undefined) {
+        promise
+          .then(() => {
+            this.isBgmPlaying = true;
+            this.fadeBgmVolume(targetVol, 320);
+          })
+          .catch((err) => {
+            console.warn('The_Weight_of_Stone BGM resume failed:', err);
+          });
+      }
+    } else {
+      this.isBgmPlaying = true;
+      this.fadeBgmVolume(targetVol, 320);
+    }
+  }
+
+  /**
+   * Stops The_Weight_of_Stone.mp3 when returning to main menu.
+   */
+  public stopMainBgm(): void {
+    if (this.bgmFadeRaf !== null) {
+      cancelAnimationFrame(this.bgmFadeRaf);
+      this.bgmFadeRaf = null;
+    }
+    if (this.bgmAudio) {
+      this.bgmAudio.pause();
+      this.bgmAudio.currentTime = 0;
+      this.isBgmPlaying = false;
+    }
+    this.isBgmPausedForRoom = false;
+    this.activeRoomSounds = 0;
+  }
+
+  // =========================================================================
+  // STORY MODE CINEMATIC SOUNDTRACK & FX ENGINE
+  // =========================================================================
+
+  public fadeAmbienceForStoryMode(duration = 1.8): void {
+    if (!this.ctx || !this.ambienceBus) return;
+    const now = this.ctx.currentTime;
+    this.heartbeatTargetVol = 0;
+    this.ambienceBus.gain.cancelScheduledValues(now);
+    this.ambienceBus.gain.setValueAtTime(this.ambienceBus.gain.value, now);
+    this.ambienceBus.gain.linearRampToValueAtTime(0.001, now + duration);
+  }
+
+  public restoreAmbienceAfterStoryMode(duration = 2.0): void {
+    if (!this.ctx || !this.ambienceBus) return;
+    const now = this.ctx.currentTime;
+    this.stopStoryModeScore();
+    this.ambienceBus.gain.cancelScheduledValues(now);
+    this.ambienceBus.gain.setValueAtTime(this.ambienceBus.gain.value, now);
+    this.ambienceBus.gain.linearRampToValueAtTime(this.musicVolume, now + duration);
+  }
+
+  public stopStoryModeScore(): void {
+    if (this.storyIntervalId) {
+      clearInterval(this.storyIntervalId);
+      this.storyIntervalId = null;
+    }
+    const now = this.ctx ? this.ctx.currentTime : 0;
+    for (const gain of this.storyActiveGains) {
+      try {
+        if (this.ctx) {
+          gain.gain.cancelScheduledValues(now);
+          gain.gain.setValueAtTime(gain.gain.value, now);
+          gain.gain.linearRampToValueAtTime(0.0001, now + 0.35);
+        }
+      } catch (_) {}
+    }
+    const oscsToStop = [...this.storyActiveOscs];
+    setTimeout(() => {
+      for (const osc of oscsToStop) {
+        try { osc.stop(); osc.disconnect(); } catch (_) {}
+      }
+    }, 400);
+
+    this.storyActiveOscs = [];
+    this.storyActiveGains = [];
+  }
+
+  public playStoryModeScore(theme: 'INTRO' | 'CHILDHOOD' | 'RESPONSIBILITY' | 'COLLEGE' | 'TRUTH_OR_DARE' | 'RULES' | 'APPROACH' | 'DISAPPEAR' | 'SEARCH' | 'RESOLVE' | 'STOP'): void {
+    if (!this.ctx || !this.storyScoreBus) return;
+    this.stopStoryModeScore();
+    if (theme === 'STOP') return;
+
+    const now = this.ctx.currentTime;
+
+    if (theme === 'INTRO') {
+      // Somber cello / low bass drone (C# minor: 34.6Hz, 69.3Hz, 138.6Hz)
+      const freqs = [34.6, 69.3, 103.8, 138.6];
+      freqs.forEach((f, idx) => {
+        if (!this.ctx || !this.storyScoreBus) return;
+        const osc = this.ctx.createOscillator();
+        osc.type = idx === 0 ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(f, now);
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(260 + idx * 80, now);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(0.045 / (idx + 1), now + 1.8);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.storyScoreBus);
+
+        osc.start(now);
+        this.storyActiveOscs.push(osc);
+        this.storyActiveGains.push(gain);
+      });
+    } else if (theme === 'CHILDHOOD') {
+      // Warm, emotional nostalgic progression (C major / Am / F warm music-box chords)
+      const chordNotes = [
+        [261.6, 329.6, 392.0, 523.2], // C maj
+        [220.0, 261.6, 329.6, 440.0], // A min
+        [174.6, 261.6, 349.2, 440.0], // F maj
+        [196.0, 246.9, 293.6, 392.0], // G maj
+      ];
+      let chordIdx = 0;
+
+      // Warm background drone
+      const drone = this.ctx.createOscillator();
+      drone.type = 'sine';
+      drone.frequency.setValueAtTime(130.8, now); // C3
+      const droneFilter = this.ctx.createBiquadFilter();
+      droneFilter.type = 'lowpass';
+      droneFilter.frequency.setValueAtTime(320, now);
+      const droneGain = this.ctx.createGain();
+      droneGain.gain.setValueAtTime(0.0001, now);
+      droneGain.gain.linearRampToValueAtTime(0.04, now + 1.2);
+      drone.connect(droneFilter);
+      droneFilter.connect(droneGain);
+      droneGain.connect(this.storyScoreBus);
+      drone.start(now);
+      this.storyActiveOscs.push(drone);
+      this.storyActiveGains.push(droneGain);
+
+      // Play nostalgic bell notes in warm arpeggio
+      const playChords = () => {
+        if (!this.ctx || !this.storyScoreBus) return;
+        const currentChord = chordNotes[chordIdx % chordNotes.length];
+        chordIdx++;
+
+        currentChord.forEach((noteFreq, nIdx) => {
+          if (!this.ctx || !this.storyScoreBus) return;
+          const noteTime = this.ctx.currentTime + nIdx * 0.45;
+          const osc = this.ctx.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(noteFreq, noteTime);
+
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.0001, noteTime);
+          gain.gain.linearRampToValueAtTime(0.035, noteTime + 0.08);
+          gain.gain.exponentialRampToValueAtTime(0.0001, noteTime + 2.2);
+
+          osc.connect(gain);
+          gain.connect(this.storyScoreBus);
+          osc.start(noteTime);
+          osc.stop(noteTime + 2.4);
+        });
+      };
+
+      playChords();
+      this.storyIntervalId = setInterval(playChords, 2400);
+    } else if (theme === 'RESPONSIBILITY') {
+      // Determined, slightly melancholic acoustic guitar/harp plucks
+      const baseNotes = [146.8, 164.8, 174.6, 220.0]; // D, E, F, A
+      let rIdx = 0;
+
+      const playRespNotes = () => {
+        if (!this.ctx || !this.storyScoreBus) return;
+        const freq = baseNotes[rIdx % baseNotes.length];
+        rIdx++;
+
+        const osc = this.ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(540, this.ctx.currentTime);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, this.ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.04, this.ctx.currentTime + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 1.8);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.storyScoreBus);
+
+        osc.start(this.ctx.currentTime);
+        osc.stop(this.ctx.currentTime + 1.9);
+      };
+
+      playRespNotes();
+      this.storyIntervalId = setInterval(playRespNotes, 1500);
+    } else if (theme === 'COLLEGE') {
+      // Bright, peaceful daylight college vibe (warm G major chord, airy breeze)
+      const cFreqs = [196.0, 246.9, 293.6, 392.0, 493.8];
+      cFreqs.forEach((f, idx) => {
+        if (!this.ctx || !this.storyScoreBus) return;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f, now);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(0.025, now + 1.0);
+
+        osc.connect(gain);
+        gain.connect(this.storyScoreBus);
+        osc.start(now);
+        this.storyActiveOscs.push(osc);
+        this.storyActiveGains.push(gain);
+      });
+    } else if (theme === 'TRUTH_OR_DARE') {
+      // Suspense pad with subtle tension pulse
+      const osc1 = this.ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.setValueAtTime(110.0, now); // A2
+
+      const osc2 = this.ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(155.56, now); // D#3 (Tritone)
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(240, now);
+      filter.Q.setValueAtTime(3.0, now);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.035, now + 1.2);
+
+      osc1.connect(filter);
+      osc2.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.storyScoreBus);
+
+      osc1.start(now);
+      osc2.start(now);
+      this.storyActiveOscs.push(osc1, osc2);
+      this.storyActiveGains.push(gain);
+    } else if (theme === 'APPROACH') {
+      // Dark atmospheric drone, low wind, eerie resonance
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(43.65, now); // F0
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.06, now + 1.5);
+      osc.connect(gain);
+      gain.connect(this.storyScoreBus);
+      osc.start(now);
+      this.storyActiveOscs.push(osc);
+      this.storyActiveGains.push(gain);
+    } else if (theme === 'DISAPPEAR') {
+      // Complete chilling vacuum / silence
+      // Stop all sound immediately
+      this.stopStoryModeScore();
+    } else if (theme === 'SEARCH') {
+      // Ticking pulse / urgent emotional dissonance
+      const osc = this.ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(82.4, now); // E2
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.045, now + 0.8);
+      osc.connect(gain);
+      gain.connect(this.storyScoreBus);
+      osc.start(now);
+      this.storyActiveOscs.push(osc);
+      this.storyActiveGains.push(gain);
+
+      this.storyIntervalId = setInterval(() => {
+        this.playClockTickAudio();
+      }, 700);
+    } else if (theme === 'RESOLVE') {
+      // Swelling emotional dark brass/string swell
+      const rFreqs = [55.0, 110.0, 164.8, 220.0, 277.18];
+      rFreqs.forEach((f, idx) => {
+        if (!this.ctx || !this.storyScoreBus) return;
+        const osc = this.ctx.createOscillator();
+        osc.type = idx < 2 ? 'sawtooth' : 'triangle';
+        osc.frequency.setValueAtTime(f, now);
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(180, now);
+        filter.frequency.linearRampToValueAtTime(450, now + 4.0);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(0.04, now + 3.0);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.storyScoreBus);
+        osc.start(now);
+        this.storyActiveOscs.push(osc);
+        this.storyActiveGains.push(gain);
+      });
+    }
+  }
+
+  public playBottleSpinAudio(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // Rapid friction clicks on wood that decelerate
+    const clickCount = 18;
+    for (let i = 0; i < clickCount; i++) {
+      const delay = Math.pow(i / clickCount, 1.8) * 2.2;
+      const t = now + delay;
+
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1400 - i * 40, t);
+      osc.frequency.exponentialRampToValueAtTime(320, t + 0.02);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(0.025 * (1 - i / clickCount * 0.5), t + 0.003);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.025);
+
+      osc.connect(gain);
+      gain.connect(this.sfxBus);
+      osc.start(t);
+      osc.stop(t + 0.03);
+    }
+  }
+
+  public playStoryRuleHit(ruleIndex = 0): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // Deep sub-impact + metallic resonance
+    const subOsc = this.ctx.createOscillator();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(65, now);
+    subOsc.frequency.exponentialRampToValueAtTime(26, now + 0.8);
+
+    const subGain = this.ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.12, now + 0.015);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+
+    subOsc.connect(subGain);
+    subGain.connect(this.sfxBus);
+    subOsc.start(now);
+    subOsc.stop(now + 1.25);
+
+    // Resonant iron chime
+    const ironOsc = this.ctx.createOscillator();
+    ironOsc.type = 'triangle';
+    ironOsc.frequency.setValueAtTime(340 + ruleIndex * 35, now);
+
+    const ironFilter = this.ctx.createBiquadFilter();
+    ironFilter.type = 'bandpass';
+    ironFilter.frequency.setValueAtTime(340 + ruleIndex * 35, now);
+    ironFilter.Q.setValueAtTime(6.0, now);
+
+    const ironGain = this.ctx.createGain();
+    ironGain.gain.setValueAtTime(0.0001, now);
+    ironGain.gain.linearRampToValueAtTime(0.05, now + 0.01);
+    ironGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.8);
+
+    ironOsc.connect(ironFilter);
+    ironFilter.connect(ironGain);
+    ironGain.connect(this.sfxBus);
+    ironOsc.start(now);
+    ironOsc.stop(now + 1.85);
+  }
+
+  public playStoryHorrorSting(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // Sub-bass dread hit
+    const sub = this.ctx.createOscillator();
+    sub.type = 'sawtooth';
+    sub.frequency.setValueAtTime(55, now);
+    sub.frequency.exponentialRampToValueAtTime(24, now + 1.6);
+
+    const subFilter = this.ctx.createBiquadFilter();
+    subFilter.type = 'lowpass';
+    subFilter.frequency.setValueAtTime(140, now);
+
+    const subGain = this.ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.14, now + 0.03);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.4);
+
+    sub.connect(subFilter);
+    subFilter.connect(subGain);
+    subGain.connect(this.sfxBus);
+    sub.start(now);
+    sub.stop(now + 2.5);
+
+    // Eerie discordant sting
+    [587.33, 622.25, 830.61].forEach((f) => {
+      if (!this.ctx || !this.sfxBus) return;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, now);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.03, now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 2.0);
+
+      osc.connect(gain);
+      gain.connect(this.sfxBus);
+      osc.start(now);
+      osc.stop(now + 2.1);
+    });
+  }
+
+  public playClockTickAudio(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1800, now);
+    osc.frequency.exponentialRampToValueAtTime(450, now + 0.012);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.025, now + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.015);
+
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+    osc.start(now);
+    osc.stop(now + 0.02);
+  }
+
+  public playMusicBox(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const notes = [
+      { f: 587.33, t: 0 },
+      { f: 698.46, t: 0.5 },
+      { f: 880.00, t: 1.0 },
+      { f: 1174.66, t: 1.5 },
+      { f: 1046.50, t: 2.2 },
+      { f: 932.33, t: 2.8 },
+      { f: 880.00, t: 3.5 },
+      { f: 783.99, t: 4.2 }
+    ];
+
+    notes.forEach((note) => {
+      setTimeout(() => {
+        if (!this.ctx || !this.sfxBus) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const harm = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(note.f, now);
+        harm.type = 'triangle';
+        harm.frequency.setValueAtTime(note.f * 3, now);
+
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+
+        osc.connect(gain);
+        harm.connect(gain);
+        gain.connect(this.sfxBus);
+
+        osc.start(now);
+        harm.start(now);
+        osc.stop(now + 1.3);
+        harm.stop(now + 1.3);
+      }, note.t * 1000);
+    });
+  }
+
+  public playChairSlide(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.linearRampToValueAtTime(130, now + 0.8);
+
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
+
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.9);
+  }
+
+  public playMirrorSilhouetteStinger(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const osc1 = this.ctx.createOscillator();
+    const osc2 = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc1.type = 'sawtooth';
+    osc2.type = 'triangle';
+    osc1.frequency.setValueAtTime(300, now);
+    osc2.frequency.setValueAtTime(424, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.3, now + 0.3);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.8);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 1.9);
+    osc2.stop(now + 1.9);
+  }
+
+  public stopGrandfatherClock(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(35, now + 0.6);
+
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.75);
+  }
+
+  public playUpstairsFootsteps(): void {
+    if (!this.ctx) return;
+    const steps = [0, 420, 840, 1260];
+    steps.forEach((delayMs, idx) => {
+      setTimeout(() => {
+        if (!this.ctx || !this.sfxBus) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(80 + (idx % 2) * 15, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + 0.18);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(150, now);
+
+        gain.gain.setValueAtTime(0.32, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.sfxBus);
+
+        osc.start(now);
+        osc.stop(now + 0.25);
+        this.playWallCreak(0.5);
+      }, delayMs);
+    });
+  }
+
+  public playCinematicTransition(): void {
+    if (!this.ctx || !this.uiBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(60, now);
+    osc.frequency.exponentialRampToValueAtTime(28, now + 1.2);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.12, now + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
+
+    osc.connect(gain);
+    gain.connect(this.uiBus);
+
+    osc.start(now);
+    osc.stop(now + 1.35);
+  }
+
+  public playMenuHover(): void {
+    if (!this.ctx || !this.uiBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(240, now);
+    osc.frequency.exponentialRampToValueAtTime(170, now + 0.04);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.020, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+
+    osc.connect(gain);
+    gain.connect(this.uiBus);
+
+    osc.start(now);
+    osc.stop(now + 0.06);
+  }
+
+  public playMenuSelect(): void {
+    if (!this.ctx || !this.uiBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(130, now);
+    osc.frequency.exponentialRampToValueAtTime(65, now + 0.25);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.060, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+
+    osc.connect(gain);
+    gain.connect(this.uiBus);
+
+    osc.start(now);
+    osc.stop(now + 0.30);
+  }
+
+  /**
+   * LAMP 1: Very distant old bell sound tolling in the foggy hills.
+   * Somber, resonant vintage church bell with authentic harmonic overtones and 4+ second acoustic decay.
+   */
+  public playDistantOldBell(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // Harmonic bell partials: fundamental + striking overtone cluster
+    const partials = [
+      { freq: 185, gain: 0.045, decay: 4.8 }, // fundamental drone
+      { freq: 370, gain: 0.038, decay: 3.6 }, // octave
+      { freq: 555, gain: 0.022, decay: 2.8 }, // tierce
+      { freq: 835, gain: 0.015, decay: 1.9 }, // quint
+      { freq: 1110, gain: 0.008, decay: 1.2 }, // strike tone
+    ];
+
+    const bellMaster = this.ctx.createGain();
+    bellMaster.gain.setValueAtTime(0.0001, now);
+    bellMaster.gain.linearRampToValueAtTime(1.0, now + 0.02);
+    bellMaster.gain.exponentialRampToValueAtTime(0.0001, now + 5.0);
+
+    // Muffled distance low-pass filter (sounds distant through forest fog)
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(820, now);
+    filter.Q.setValueAtTime(1.5, now);
+
+    // Echoing slightly from the misty hills to the left
+    const panner = this.createPanner(-0.35);
+
+    partials.forEach(({ freq, gain, decay }) => {
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+
+      const partGain = this.ctx.createGain();
+      partGain.gain.setValueAtTime(0.0001, now);
+      partGain.gain.linearRampToValueAtTime(gain, now + 0.015);
+      partGain.gain.exponentialRampToValueAtTime(0.00001, now + decay);
+
+      osc.connect(partGain);
+      partGain.connect(bellMaster);
+
+      osc.start(now);
+      osc.stop(now + decay + 0.1);
+    });
+
+    bellMaster.connect(filter);
+    filter.connect(panner);
+    panner.connect(this.sfxBus);
+  }
+
+  /**
+   * LAMP 2: Faint wooden creak from the distant bungalow window.
+   * Spatialized at the mansion (z = -56), muffled and subtle.
+   */
+  public playBungalowWindowCreak(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const spatial = this.getSpatialParams(0, 4.2, -56);
+
+    // Wooden window shutter stress
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.linearRampToValueAtTime(125, now + 0.65);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(260, now);
+    filter.Q.setValueAtTime(3.5, now);
+
+    const gain = this.ctx.createGain();
+    const vol = 0.018 * spatial.attenuation;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+
+    const panner = this.createPanner(spatial.pan);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.75);
+  }
+
+  /**
+   * LAMP SPAWN: Subtle horror-style spawn audio cue when the 3rd lamp materializes beside the main gate.
+   * Soft metallic ring, subtle resonant chime, and delicate padlock vibration.
+   */
+  public playLampSpawn(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // Resonant high-register glass/bell harmonic
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(659.25, now); // E5
+    osc.frequency.exponentialRampToValueAtTime(329.63, now + 1.2); // E4
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.045, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+
+    osc.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 1.5);
+
+    // Subtle metallic clink
+    setTimeout(() => {
+      this.playSubtlePadlockClink();
+    }, 150);
+  }
+
+  /**
+   * LAMP IGNITION: Plays official lamp.mpeg SFX at lamp glow moment.
+   */
+  public playLampIgnition(pan = 0): void {
+    this.playLampSfx();
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Flint friction / match scrape
+    if (this.pinkNoiseBuffer) {
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = this.pinkNoiseBuffer;
+
+      const nFilter = this.ctx.createBiquadFilter();
+      nFilter.type = 'bandpass';
+      nFilter.frequency.setValueAtTime(3200, now);
+      nFilter.Q.setValueAtTime(2.2, now);
+
+      const nGain = this.ctx.createGain();
+      nGain.gain.setValueAtTime(0.0001, now);
+      nGain.gain.linearRampToValueAtTime(0.022, now + 0.02);
+      nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+
+      const panner = this.createPanner(pan);
+
+      noise.connect(nFilter);
+      nFilter.connect(nGain);
+      nGain.connect(panner);
+      panner.connect(this.sfxBus);
+
+      noise.start(now);
+      noise.stop(now + 0.1);
+    }
+
+    // 2. Warm oil flame whoosh & ignition
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(210, now + 0.04);
+    osc.frequency.exponentialRampToValueAtTime(85, now + 0.38);
+
+    const oscFilter = this.ctx.createBiquadFilter();
+    oscFilter.type = 'lowpass';
+    oscFilter.frequency.setValueAtTime(340, now);
+
+    const oscGain = this.ctx.createGain();
+    oscGain.gain.setValueAtTime(0.0001, now + 0.04);
+    oscGain.gain.linearRampToValueAtTime(0.025, now + 0.08);
+    oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+
+    const oscPanner = this.createPanner(pan);
+
+    osc.connect(oscFilter);
+    oscFilter.connect(oscGain);
+    oscGain.connect(oscPanner);
+    oscPanner.connect(this.sfxBus);
+
+    osc.start(now + 0.04);
+    osc.stop(now + 0.45);
+  }
+
+  /**
+   * RITUAL COMPLETE: Gate padlock jolt & subtle metallic lock reaction.
+   */
+  public playRitualGateReaction(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const spatial = this.getSpatialParams(0, 3.15, -22);
+
+    // Deep metallic thunk
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(340, now);
+    osc.frequency.exponentialRampToValueAtTime(95, now + 0.22);
+
+    const gain = this.ctx.createGain();
+    const vol = 0.035 * spatial.attenuation;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+
+    const panner = this.createPanner(spatial.pan);
+
+    osc.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    osc.start(now);
+    osc.stop(now + 0.32);
+
+    // Followed 80ms later by delicate padlock clink
+    setTimeout(() => {
+      this.playSubtlePadlockClink();
+    }, 90);
+  }
+
+  /**
+   * KEY PICKUP: Heavy cold antique iron key clinking into investigator pocket.
+   */
+  public playKeyPickup(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(2600, now);
+    osc.frequency.exponentialRampToValueAtTime(1450, now + 0.15);
+
+    const osc2 = this.ctx.createOscillator();
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(3250, now);
+    osc2.frequency.exponentialRampToValueAtTime(1800, now + 0.12);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.028, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+
+    osc.connect(gain);
+    osc2.connect(gain);
+    gain.connect(this.sfxBus);
+
+    osc.start(now);
+    osc2.start(now);
+    osc.stop(now + 0.25);
+    osc2.stop(now + 0.25);
+  }
+
+  /**
+   * Pre-decodes the uploaded official main gate opening audio file from /audio/gate-opening-sound.wav
+   */
+  public async loadGateOpeningAudio(): Promise<void> {
+    try {
+      const response = await fetch('/audio/gate-opening-sound.wav');
+      if (!response.ok) return;
+      const arrayBuffer = await response.arrayBuffer();
+      if (this.ctx) {
+        this.gateOpeningAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+      }
+    } catch (err) {
+      console.warn('Failed to decode gate-opening-sound.wav:', err);
+    }
+  }
+
+  /**
+   * OFFICIAL MAIN EXTERIOR IRON GATE OPENING SOUND EFFECT:
+   * Uses uploaded audio file public/audio/gate-opening-sound.wav (~10s).
+   * 1. Stops & smoothly fades out background music over ~0.5s.
+   * 2. Plays the uploaded audio file exactly once through the audio system.
+   * 3. Prevents duplicate playback and suppresses old gate audio underneath.
+   * 4. Does not restart background music automatically after sound finishes.
+   * 5. Keeps environmental ambience and other gameplay sounds intact.
+   */
+  public playMainGateOpeningAudio(): void {
+    if (this.hasPlayedGateAudio || this.isGateOpeningPlaying) return;
+    this.hasPlayedGateAudio = true;
+    this.isGateOpeningPlaying = true;
+    this.isMusicDisabledAfterGate = true;
+
+    // 1. Smoothly and quickly fade out background music (drone & story score) over 0.5s
+    if (this.ctx) {
+      const now = this.ctx.currentTime;
+      if (this.droneGain) {
+        this.droneGain.gain.cancelScheduledValues(now);
+        this.droneGain.gain.setValueAtTime(this.droneGain.gain.value, now);
+        this.droneGain.gain.linearRampToValueAtTime(0.0001, now + 0.5);
+      }
+      if (this.storyScoreBus) {
+        this.storyScoreBus.gain.cancelScheduledValues(now);
+        this.storyScoreBus.gain.setValueAtTime(this.storyScoreBus.gain.value, now);
+        this.storyScoreBus.gain.linearRampToValueAtTime(0.0001, now + 0.5);
+      }
+    }
+
+    const finish = () => {
+      this.isGateOpeningPlaying = false;
+      if (this.gateOpeningSafetyTimeout) {
+        clearTimeout(this.gateOpeningSafetyTimeout);
+        this.gateOpeningSafetyTimeout = null;
+      }
+      if (this.gateOpeningAudioSource) {
+        this.gateOpeningAudioSource.onended = null;
+        this.gateOpeningAudioSource = null;
+      }
+      if (this.gateOpeningAudioEl) {
+        this.gateOpeningAudioEl.onended = null;
+        this.gateOpeningAudioEl.onerror = null;
+      }
+    };
+
+    this.gateOpeningSafetyTimeout = setTimeout(finish, 8500);
+
+    // Stop any existing source cleanly without firing old onended
+    if (this.gateOpeningAudioSource) {
+      try {
+        this.gateOpeningAudioSource.onended = null;
+        this.gateOpeningAudioSource.stop();
+        this.gateOpeningAudioSource.disconnect();
+      } catch (_) {}
+      this.gateOpeningAudioSource = null;
+    }
+
+    // 2. Play via Web Audio API AudioBufferSourceNode if decoded
+    if (this.ctx && this.gateOpeningAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.gateOpeningAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume * 1.15), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.gateOpeningAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed, using single HTMLAudio fallback:', e);
+      }
+    }
+
+    // Fallback: Reused single HTMLAudioElement
+    try {
+      if (!this.gateOpeningAudioEl) {
+        this.gateOpeningAudioEl = new Audio('/audio/gate-opening-sound.wav');
+        this.gateOpeningAudioEl.preload = 'auto';
+      }
+      this.gateOpeningAudioEl.onended = finish;
+      this.gateOpeningAudioEl.onerror = finish;
+      this.gateOpeningAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume * 1.15);
+      this.gateOpeningAudioEl.currentTime = 0;
+      this.gateOpeningAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('Fallback audio failed:', e);
+      finish();
+    }
+  }
+
+  /**
+   * Pre-decodes the uploaded official kitchen room horror audio file (/audio/kitchen.mpeg).
+   * Gracefully falls back to compatible copies (/audio/kitchen.mp3 or /audio/kitchen.wav) if needed.
+   */
+  public async loadKitchenAudio(): Promise<void> {
+    if (!this.kitchenAudioEl) {
+      this.kitchenAudioEl = new Audio(this.kitchenAudioUrl);
+      this.kitchenAudioEl.preload = 'auto';
+    }
+    const candidateUrls = ['/audio/kitchen.mpeg', '/audio/kitchen.mp3', '/audio/kitchen.wav'];
+    for (const url of candidateUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        if (this.ctx) {
+          this.kitchenAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+          this.kitchenAudioUrl = url;
+          return;
+        }
+      } catch (err) {
+        console.warn(`Failed to decode kitchen audio from ${url}:`, err);
+      }
+    }
+  }
+
+  /**
+   * OFFICIAL KITCHEN ROOM ENTRY HORROR SOUND EFFECT:
+   * Uses uploaded audio file kitchen.mpeg.
+   * - Triggered immediately when player enters the Kitchen Room.
+   * - Plays exactly once per room entry.
+   * - Uses single reused audio instance with zero-latency playback.
+   * - Pauses The_Weight_of_Stone.mp3 and resumes it smoothly when finished.
+   * - Does not block player movement while playing.
+   */
+  public playKitchenHorrorSound(): void {
+    if (this.isKitchenPlaying) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    this.isKitchenPlaying = true;
+    this.pauseBgmForRoomSound();
+
+    let hasFinished = false;
+    const finish = () => {
+      if (hasFinished) return;
+      hasFinished = true;
+      this.isKitchenPlaying = false;
+      if (this.kitchenSafetyTimeout) {
+        clearTimeout(this.kitchenSafetyTimeout);
+        this.kitchenSafetyTimeout = null;
+      }
+      if (this.kitchenAudioSource) {
+        this.kitchenAudioSource.onended = null;
+        this.kitchenAudioSource = null;
+      }
+      if (this.kitchenAudioEl) {
+        this.kitchenAudioEl.onended = null;
+        this.kitchenAudioEl.onerror = null;
+      }
+      this.resumeBgmAfterRoomSound();
+    };
+
+    this.kitchenSafetyTimeout = setTimeout(finish, 5200);
+
+    // Stop previous buffer source cleanly without firing old onended
+    if (this.kitchenAudioSource) {
+      try {
+        this.kitchenAudioSource.onended = null;
+        this.kitchenAudioSource.stop();
+        this.kitchenAudioSource.disconnect();
+      } catch (_) {}
+      this.kitchenAudioSource = null;
+    }
+
+    // Prefer Web Audio API if buffer is decoded
+    if (this.ctx && this.kitchenAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.kitchenAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.kitchenAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed for kitchen audio, using single HTMLAudio instance:', e);
+      }
+    }
+
+    // Reuse the exact same single HTMLAudioElement instance
+    try {
+      if (!this.kitchenAudioEl) {
+        this.kitchenAudioEl = new Audio(this.kitchenAudioUrl || '/audio/kitchen.mpeg');
+        this.kitchenAudioEl.preload = 'auto';
+      }
+      this.kitchenAudioEl.onended = finish;
+      this.kitchenAudioEl.onerror = finish;
+      this.kitchenAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume);
+      this.kitchenAudioEl.currentTime = 0;
+      this.kitchenAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('HTMLAudio fallback failed for kitchen sound:', e);
+      finish();
+    }
+  }
+
+  /**
+   * Pre-decodes the uploaded official starting horror audio file (/audio/starting.mpeg).
+   * Gracefully falls back to compatible copies (/audio/starting.mp3 or /audio/starting.wav) if needed.
+   */
+  public async loadStartingAudio(): Promise<void> {
+    if (!this.startingAudioEl) {
+      this.startingAudioEl = new Audio(this.startingAudioUrl);
+      this.startingAudioEl.preload = 'auto';
+    }
+    const candidateUrls = ['/audio/starting.mpeg', '/audio/starting.mp3', '/audio/starting.wav'];
+    for (const url of candidateUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        if (this.ctx) {
+          this.startingAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+          this.startingAudioUrl = url;
+          return;
+        }
+      } catch (err) {
+        console.warn(`Failed to decode starting audio from ${url}:`, err);
+      }
+    }
+  }
+
+  /**
+   * OFFICIAL STARTING GAME HORROR SOUND EFFECT:
+   * Uses uploaded audio file starting.mpeg.
+   * - Triggered immediately when the player clicks the PLAY button on the main menu.
+   * - Starts playback inside the user's PLAY-button click interaction.
+   * - Plays exactly once per game session start.
+   * - Single reused audio instance with zero overlapping or stuttering.
+   */
+  public playStartingHorrorSound(): void {
+    if (this.isStartingPlaying) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    this.isStartingPlaying = true;
+
+    let hasFinished = false;
+    const finish = () => {
+      if (hasFinished) return;
+      hasFinished = true;
+      this.isStartingPlaying = false;
+      if (this.startingSafetyTimeout) {
+        clearTimeout(this.startingSafetyTimeout);
+        this.startingSafetyTimeout = null;
+      }
+      if (this.startingAudioSource) {
+        this.startingAudioSource.onended = null;
+        this.startingAudioSource = null;
+      }
+      if (this.startingAudioEl) {
+        this.startingAudioEl.onended = null;
+        this.startingAudioEl.onerror = null;
+      }
+    };
+
+    this.startingSafetyTimeout = setTimeout(finish, 5200);
+
+    if (this.startingAudioSource) {
+      try {
+        this.startingAudioSource.onended = null;
+        this.startingAudioSource.stop();
+        this.startingAudioSource.disconnect();
+      } catch (_) {}
+      this.startingAudioSource = null;
+    }
+
+    if (this.ctx && this.startingAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.startingAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.startingAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed for starting audio, using single HTMLAudio instance:', e);
+      }
+    }
+
+    try {
+      if (!this.startingAudioEl) {
+        this.startingAudioEl = new Audio(this.startingAudioUrl || '/audio/starting.mpeg');
+        this.startingAudioEl.preload = 'auto';
+      }
+      this.startingAudioEl.onended = finish;
+      this.startingAudioEl.onerror = finish;
+      this.startingAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume);
+      this.startingAudioEl.currentTime = 0;
+      this.startingAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('HTMLAudio fallback failed for starting sound:', e);
+      finish();
+    }
+  }
+
+  /**
+   * Pre-decodes the uploaded official bathroom horror audio file (/audio/bathroom.mpeg).
+   * Gracefully falls back to compatible copies (/audio/bathroom.mp3 or /audio/bathroom.wav) if needed.
+   */
+  public async loadBathroomAudio(): Promise<void> {
+    if (!this.bathroomAudioEl) {
+      this.bathroomAudioEl = new Audio(this.bathroomAudioUrl);
+      this.bathroomAudioEl.preload = 'auto';
+    }
+    const candidateUrls = ['/audio/bathroom.mpeg', '/audio/bathroom.mp3', '/audio/bathroom.wav'];
+    for (const url of candidateUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        if (this.ctx) {
+          this.bathroomAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+          this.bathroomAudioUrl = url;
+          return;
+        }
+      } catch (err) {
+        console.warn(`Failed to decode bathroom audio from ${url}:`, err);
+      }
+    }
+  }
+
+  /**
+   * OFFICIAL BATHROOM ROOM ENTRY HORROR SOUND EFFECT:
+   * Uses uploaded audio file bathroom.mpeg.
+   * - Triggered automatically when player physically enters the Bathroom room.
+   * - Natural volume, no sudden clipping, connects to existing sfxBus.
+   * - Pauses The_Weight_of_Stone.mp3 and resumes it smoothly when finished.
+   * - Does not block player movement while playing.
+   */
+  public playBathroomHorrorSound(): void {
+    if (this.isBathroomPlaying) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    this.isBathroomPlaying = true;
+    this.pauseBgmForRoomSound();
+
+    let hasFinished = false;
+    const finish = () => {
+      if (hasFinished) return;
+      hasFinished = true;
+      this.isBathroomPlaying = false;
+      if (this.bathroomSafetyTimeout) {
+        clearTimeout(this.bathroomSafetyTimeout);
+        this.bathroomSafetyTimeout = null;
+      }
+      if (this.bathroomAudioSource) {
+        this.bathroomAudioSource.onended = null;
+        this.bathroomAudioSource = null;
+      }
+      if (this.bathroomAudioEl) {
+        this.bathroomAudioEl.onended = null;
+        this.bathroomAudioEl.onerror = null;
+      }
+      this.resumeBgmAfterRoomSound();
+    };
+
+    this.bathroomSafetyTimeout = setTimeout(finish, 5200);
+
+    if (this.bathroomAudioSource) {
+      try {
+        this.bathroomAudioSource.onended = null;
+        this.bathroomAudioSource.stop();
+        this.bathroomAudioSource.disconnect();
+      } catch (_) {}
+      this.bathroomAudioSource = null;
+    }
+
+    if (this.ctx && this.bathroomAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.bathroomAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.bathroomAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed for bathroom audio, using single HTMLAudio instance:', e);
+      }
+    }
+
+    try {
+      if (!this.bathroomAudioEl) {
+        this.bathroomAudioEl = new Audio(this.bathroomAudioUrl || '/audio/bathroom.mpeg');
+        this.bathroomAudioEl.preload = 'auto';
+      }
+      this.bathroomAudioEl.onended = finish;
+      this.bathroomAudioEl.onerror = finish;
+      this.bathroomAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume);
+      this.bathroomAudioEl.currentTime = 0;
+      this.bathroomAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('HTMLAudio fallback failed for bathroom sound:', e);
+      finish();
+    }
+  }
+
+  /**
+   * Pre-decodes the uploaded official store room horror audio file (/audio/store_room.mpeg).
+   * Gracefully falls back to compatible copies (/audio/store_room.mp3 or /audio/store_room.wav) if needed.
+   */
+  public async loadStoreRoomAudio(): Promise<void> {
+    if (!this.storeRoomAudioEl) {
+      this.storeRoomAudioEl = new Audio(this.storeRoomAudioUrl);
+      this.storeRoomAudioEl.preload = 'auto';
+    }
+    const candidateUrls = [
+      '/audio/store_room.mpeg',
+      '/audio/store room.mpeg',
+      '/audio/store_room.mp3',
+      '/audio/store_room.wav',
+    ];
+    for (const url of candidateUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        if (this.ctx) {
+          this.storeRoomAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+          this.storeRoomAudioUrl = url;
+          return;
+        }
+      } catch (err) {
+        console.warn(`Failed to decode store room audio from ${url}:`, err);
+      }
+    }
+  }
+
+  /**
+   * OFFICIAL STORE ROOM ENTRY HORROR SOUND EFFECT:
+   * Uses uploaded audio file store room.mpeg.
+   * - Triggered automatically when player physically enters the Store Room.
+   * - Plays exactly once per game session.
+   * - Natural volume, no sudden clipping, connects to existing sfxBus.
+   * - Pauses The_Weight_of_Stone.mp3 and resumes it smoothly when finished.
+   * - Does not block player movement while playing.
+   */
+  public playStoreRoomHorrorSound(): void {
+    if (this.isStoreRoomPlaying) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    this.isStoreRoomPlaying = true;
+    this.pauseBgmForRoomSound();
+
+    let hasFinished = false;
+    const finish = () => {
+      if (hasFinished) return;
+      hasFinished = true;
+      this.isStoreRoomPlaying = false;
+      if (this.storeRoomSafetyTimeout) {
+        clearTimeout(this.storeRoomSafetyTimeout);
+        this.storeRoomSafetyTimeout = null;
+      }
+      if (this.storeRoomAudioSource) {
+        this.storeRoomAudioSource.onended = null;
+        this.storeRoomAudioSource = null;
+      }
+      if (this.storeRoomAudioEl) {
+        this.storeRoomAudioEl.onended = null;
+        this.storeRoomAudioEl.onerror = null;
+      }
+      this.resumeBgmAfterRoomSound();
+    };
+
+    this.storeRoomSafetyTimeout = setTimeout(finish, 5200);
+
+    if (this.storeRoomAudioSource) {
+      try {
+        this.storeRoomAudioSource.onended = null;
+        this.storeRoomAudioSource.stop();
+        this.storeRoomAudioSource.disconnect();
+      } catch (_) {}
+      this.storeRoomAudioSource = null;
+    }
+
+    if (this.ctx && this.storeRoomAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.storeRoomAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.storeRoomAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed for store room audio, using single HTMLAudio instance:', e);
+      }
+    }
+
+    try {
+      if (!this.storeRoomAudioEl) {
+        this.storeRoomAudioEl = new Audio(this.storeRoomAudioUrl || '/audio/store_room.mpeg');
+        this.storeRoomAudioEl.preload = 'auto';
+      }
+      this.storeRoomAudioEl.onended = finish;
+      this.storeRoomAudioEl.onerror = finish;
+      this.storeRoomAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume);
+      this.storeRoomAudioEl.currentTime = 0;
+      this.storeRoomAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('HTMLAudio fallback failed for store room sound:', e);
+      finish();
+    }
+  }
+
+  /**
+   * Pre-decodes the uploaded official outdoor iron gate -> bungalow audio file (/audio/between_iron_gate_and_bunglow.mpeg).
+   * Gracefully falls back to compatible copies (/audio/between_iron_gate_and_bunglow.mp3 or /audio/between_iron_gate_and_bunglow.wav) if needed.
+   */
+  public async loadGateToBungalowAudio(): Promise<void> {
+    if (!this.gateToBungalowAudioEl) {
+      this.gateToBungalowAudioEl = new Audio(this.gateToBungalowAudioUrl);
+      this.gateToBungalowAudioEl.preload = 'auto';
+    }
+    const candidateUrls = [
+      '/audio/between_iron_gate_and_bunglow.mpeg',
+      '/audio/between iron gate and bunglow.mpeg',
+      '/audio/between_iron_gate_and_bunglow.mp3',
+      '/audio/between_iron_gate_and_bunglow.wav',
+    ];
+    for (const url of candidateUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        if (this.ctx) {
+          this.gateToBungalowAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+          this.gateToBungalowAudioUrl = url;
+          return;
+        }
+      } catch (err) {
+        console.warn(`Failed to decode gate to bungalow audio from ${url}:`, err);
+      }
+    }
+  }
+
+  /**
+   * OFFICIAL OUTDOOR IRON GATE -> BUNGALOW HORROR SOUND EFFECT:
+   * Uses uploaded audio file between iron gate and bunglow.mpeg.
+   * - Triggered automatically when player walks into outdoor area between Iron Gate and Bungalow.
+   * - Plays exactly once per game session.
+   * - Natural volume, no sudden clipping, connects to existing sfxBus.
+   * - Does not alter background music, ambient sounds, or other room sounds.
+   * - Does not block player movement while playing.
+   */
+  public playGateToBungalowHorrorSound(): void {
+    if (this.isGateToBungalowPlaying) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    this.isGateToBungalowPlaying = true;
+
+    let hasFinished = false;
+    const finish = () => {
+      if (hasFinished) return;
+      hasFinished = true;
+      this.isGateToBungalowPlaying = false;
+      if (this.gateToBungalowSafetyTimeout) {
+        clearTimeout(this.gateToBungalowSafetyTimeout);
+        this.gateToBungalowSafetyTimeout = null;
+      }
+      if (this.gateToBungalowAudioSource) {
+        this.gateToBungalowAudioSource.onended = null;
+        this.gateToBungalowAudioSource = null;
+      }
+      if (this.gateToBungalowAudioEl) {
+        this.gateToBungalowAudioEl.onended = null;
+        this.gateToBungalowAudioEl.onerror = null;
+      }
+    };
+
+    this.gateToBungalowSafetyTimeout = setTimeout(finish, 5200);
+
+    if (this.gateToBungalowAudioSource) {
+      try {
+        this.gateToBungalowAudioSource.onended = null;
+        this.gateToBungalowAudioSource.stop();
+        this.gateToBungalowAudioSource.disconnect();
+      } catch (_) {}
+      this.gateToBungalowAudioSource = null;
+    }
+
+    if (this.ctx && this.gateToBungalowAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.gateToBungalowAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.gateToBungalowAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed for gate to bungalow audio, using single HTMLAudio instance:', e);
+      }
+    }
+
+    try {
+      if (!this.gateToBungalowAudioEl) {
+        this.gateToBungalowAudioEl = new Audio(this.gateToBungalowAudioUrl || '/audio/between_iron_gate_and_bunglow.mpeg');
+        this.gateToBungalowAudioEl.preload = 'auto';
+      }
+      this.gateToBungalowAudioEl.onended = finish;
+      this.gateToBungalowAudioEl.onerror = finish;
+      this.gateToBungalowAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume);
+      this.gateToBungalowAudioEl.currentTime = 0;
+      this.gateToBungalowAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('HTMLAudio fallback failed for gate to bungalow sound:', e);
+      finish();
+    }
+  }
+
+  // =========================================================================
+  // 1. OUTDOOR OIL LAMPS SFX (lamp.mpeg)
+  // Triggered exactly when each of the 3 outdoor lamps activates / glows.
+  // Pauses BGM immediately, plays completely, waits exactly 3s, resumes BGM.
+  // =========================================================================
+
+  public async loadLampAudio(): Promise<void> {
+    if (!this.lampAudioEl) {
+      this.lampAudioEl = new Audio(this.lampAudioUrl);
+      this.lampAudioEl.preload = 'auto';
+    }
+    const candidateUrls = [
+      '/audio/lamp.mpeg',
+      '/assets/aistudio/lamp_e7fbd3db.mpeg',
+      '/audio/lamp.mp3',
+      '/audio/lamp.wav',
+    ];
+    for (const url of candidateUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        if (this.ctx) {
+          this.lampAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+          this.lampAudioUrl = url;
+          return;
+        }
+      } catch (err) {
+        console.warn(`Failed to decode lamp audio from ${url}:`, err);
+      }
+    }
+  }
+
+  public playLampSfx(): void {
+    if (this.isLampSfxPlaying) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    if (this.lampResumeTimeout) {
+      clearTimeout(this.lampResumeTimeout);
+      this.lampResumeTimeout = null;
+    }
+
+    this.isLampSfxPlaying = true;
+    this.pauseBgmImmediately();
+
+    let hasFinished = false;
+    const finish = () => {
+      if (hasFinished) return;
+      hasFinished = true;
+      this.isLampSfxPlaying = false;
+      if (this.lampSafetyTimeout) {
+        clearTimeout(this.lampSafetyTimeout);
+        this.lampSafetyTimeout = null;
+      }
+      if (this.lampAudioSource) {
+        try {
+          this.lampAudioSource.onended = null;
+          this.lampAudioSource.disconnect();
+        } catch (_) {}
+        this.lampAudioSource = null;
+      }
+      if (this.lampAudioEl) {
+        this.lampAudioEl.onended = null;
+        this.lampAudioEl.onerror = null;
+      }
+
+      // After the SFX finishes, wait exactly 3 seconds, then resume background music from exact position
+      this.lampResumeTimeout = setTimeout(() => {
+        this.lampResumeTimeout = null;
+        this.resumeBgmAfterRoomSound();
+      }, 3000);
+    };
+
+    // Duration is ~5.04s. Safety timeout fallback at 5350ms
+    this.lampSafetyTimeout = setTimeout(finish, 5350);
+
+    if (this.lampAudioSource) {
+      try {
+        this.lampAudioSource.onended = null;
+        this.lampAudioSource.stop();
+        this.lampAudioSource.disconnect();
+      } catch (_) {}
+      this.lampAudioSource = null;
+    }
+
+    if (this.ctx && this.lampAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.lampAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.lampAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed for lamp audio, using single HTMLAudio instance:', e);
+      }
+    }
+
+    try {
+      if (!this.lampAudioEl) {
+        this.lampAudioEl = new Audio(this.lampAudioUrl || '/audio/lamp.mpeg');
+        this.lampAudioEl.preload = 'auto';
+      }
+      this.lampAudioEl.onended = finish;
+      this.lampAudioEl.onerror = finish;
+      this.lampAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume);
+      this.lampAudioEl.currentTime = 0;
+      this.lampAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('HTMLAudio fallback failed for lamp sound:', e);
+      finish();
+    }
+  }
+
+  // =========================================================================
+  // 2. SECRET DOOR UNLOCK SFX (secret door.mpeg)
+  // Triggered exactly when the 5-item puzzle is solved & secret door actually opens.
+  // Pauses BGM immediately, plays completely, waits exactly 3s, resumes BGM.
+  // =========================================================================
+
+  public async loadSecretDoorAudio(): Promise<void> {
+    if (!this.secretDoorAudioEl) {
+      this.secretDoorAudioEl = new Audio(this.secretDoorAudioUrl);
+      this.secretDoorAudioEl.preload = 'auto';
+    }
+    const candidateUrls = [
+      '/audio/secret door.mpeg',
+      '/audio/secret_door.mpeg',
+      '/assets/aistudio/secret_door_4901fcf0.mpeg',
+      '/audio/secret_door.mp3',
+      '/audio/secret_door.wav',
+    ];
+    for (const url of candidateUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        if (this.ctx) {
+          this.secretDoorAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+          this.secretDoorAudioUrl = url;
+          return;
+        }
+      } catch (err) {
+        console.warn(`Failed to decode secret door audio from ${url}:`, err);
+      }
+    }
+  }
+
+  public playSecretDoorSfx(): void {
+    if (this.isSecretDoorPlaying || this.hasPlayedSecretDoorAudio) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    if (this.secretDoorResumeTimeout) {
+      clearTimeout(this.secretDoorResumeTimeout);
+      this.secretDoorResumeTimeout = null;
+    }
+
+    this.isSecretDoorPlaying = true;
+    this.hasPlayedSecretDoorAudio = true;
+    this.pauseBgmImmediately();
+
+    let hasFinished = false;
+    const finish = () => {
+      if (hasFinished) return;
+      hasFinished = true;
+      this.isSecretDoorPlaying = false;
+      if (this.secretDoorSafetyTimeout) {
+        clearTimeout(this.secretDoorSafetyTimeout);
+        this.secretDoorSafetyTimeout = null;
+      }
+      if (this.secretDoorAudioSource) {
+        try {
+          this.secretDoorAudioSource.onended = null;
+          this.secretDoorAudioSource.disconnect();
+        } catch (_) {}
+        this.secretDoorAudioSource = null;
+      }
+      if (this.secretDoorAudioEl) {
+        this.secretDoorAudioEl.onended = null;
+        this.secretDoorAudioEl.onerror = null;
+      }
+
+      // After the SFX finishes, wait exactly 3 seconds, then resume background music from exact position
+      this.secretDoorResumeTimeout = setTimeout(() => {
+        this.secretDoorResumeTimeout = null;
+        this.resumeBgmAfterRoomSound();
+      }, 3000);
+    };
+
+    this.secretDoorSafetyTimeout = setTimeout(finish, 5350);
+
+    if (this.secretDoorAudioSource) {
+      try {
+        this.secretDoorAudioSource.onended = null;
+        this.secretDoorAudioSource.stop();
+        this.secretDoorAudioSource.disconnect();
+      } catch (_) {}
+      this.secretDoorAudioSource = null;
+    }
+
+    if (this.ctx && this.secretDoorAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.secretDoorAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.secretDoorAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed for secret door audio, using single HTMLAudio instance:', e);
+      }
+    }
+
+    try {
+      if (!this.secretDoorAudioEl) {
+        this.secretDoorAudioEl = new Audio(this.secretDoorAudioUrl || '/audio/secret door.mpeg');
+        this.secretDoorAudioEl.preload = 'auto';
+      }
+      this.secretDoorAudioEl.onended = finish;
+      this.secretDoorAudioEl.onerror = finish;
+      this.secretDoorAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume);
+      this.secretDoorAudioEl.currentTime = 0;
+      this.secretDoorAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('HTMLAudio fallback failed for secret door sound:', e);
+      finish();
+    }
+  }
+
+  // =========================================================================
+  // 3. CENTRAL ENTRANCE HALL ROOM ENTRY SFX (hall.mpeg)
+  // Triggered immediately when player physically enters the Hall room.
+  // Does not trigger by looking at the Hall or being near its entrance.
+  // Pauses BGM immediately, plays completely, waits exactly 3s, resumes BGM.
+  // =========================================================================
+
+  // =========================================================================
+  // 3. TV ROOM (FAMILY LIVING ROOM WITH TV) ENTRY SFX (hall(1).mpeg)
+  // Triggered ONLY when player physically enters the room containing the TV.
+  // Does not trigger by looking at the room or standing near its entrance.
+  // Pauses BGM immediately, plays completely, waits exactly 3s, resumes BGM.
+  // =========================================================================
+
+  public async loadTvRoomAudio(): Promise<void> {
+    if (!this.tvRoomAudioEl) {
+      this.tvRoomAudioEl = new Audio(this.tvRoomAudioUrl);
+      this.tvRoomAudioEl.preload = 'auto';
+    }
+    const candidateUrls = [
+      '/audio/hall(1).mpeg',
+      '/assets/aistudio/hall(1).mpeg',
+      '/audio/hall_1.mpeg',
+      '/assets/aistudio/hall_1.mpeg',
+      '/audio/hall(1).mp3',
+      '/audio/hall(1).wav',
+      '/audio/hall.mpeg',
+      '/assets/aistudio/hall_6c919fc5.mpeg',
+    ];
+    for (const url of candidateUrls) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        if (this.ctx) {
+          this.tvRoomAudioBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+          this.tvRoomAudioUrl = url;
+          this.hallAudioBuffer = this.tvRoomAudioBuffer;
+          this.hallAudioUrl = url;
+          return;
+        }
+      } catch (err) {
+        console.warn(`Failed to decode TV room audio from ${url}:`, err);
+      }
+    }
+  }
+
+  public async loadHallAudio(): Promise<void> {
+    return this.loadTvRoomAudio();
+  }
+
+  public playTvRoomHorrorSound(): void {
+    if (this.isTvRoomPlaying || this.hasPlayedTvRoomAudio) return;
+
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+
+    if (this.tvRoomResumeTimeout) {
+      clearTimeout(this.tvRoomResumeTimeout);
+      this.tvRoomResumeTimeout = null;
+    }
+
+    this.isTvRoomPlaying = true;
+    this.hasPlayedTvRoomAudio = true;
+    this.isHallPlaying = true;
+    this.hasPlayedHallAudio = true;
+    this.pauseBgmImmediately();
+
+    let hasFinished = false;
+    const finish = () => {
+      if (hasFinished) return;
+      hasFinished = true;
+      this.isTvRoomPlaying = false;
+      this.isHallPlaying = false;
+      if (this.tvRoomSafetyTimeout) {
+        clearTimeout(this.tvRoomSafetyTimeout);
+        this.tvRoomSafetyTimeout = null;
+      }
+      if (this.tvRoomAudioSource) {
+        try {
+          this.tvRoomAudioSource.onended = null;
+          this.tvRoomAudioSource.disconnect();
+        } catch (_) {}
+        this.tvRoomAudioSource = null;
+      }
+      if (this.tvRoomAudioEl) {
+        this.tvRoomAudioEl.onended = null;
+        this.tvRoomAudioEl.onerror = null;
+      }
+      if (this.hallAudioEl) {
+        this.hallAudioEl.onended = null;
+        this.hallAudioEl.onerror = null;
+      }
+
+      // After the SFX finishes, wait exactly 3 seconds, then resume background music from exact position
+      this.tvRoomResumeTimeout = setTimeout(() => {
+        this.tvRoomResumeTimeout = null;
+        this.resumeBgmAfterRoomSound();
+      }, 3000);
+    };
+
+    this.tvRoomSafetyTimeout = setTimeout(finish, 5350);
+
+    if (this.tvRoomAudioSource) {
+      try {
+        this.tvRoomAudioSource.onended = null;
+        this.tvRoomAudioSource.stop();
+        this.tvRoomAudioSource.disconnect();
+      } catch (_) {}
+      this.tvRoomAudioSource = null;
+    }
+
+    if (this.ctx && this.tvRoomAudioBuffer && this.sfxBus && this.ctx.state === 'running') {
+      try {
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.tvRoomAudioBuffer;
+        source.loop = false;
+
+        const gainNode = this.ctx.createGain();
+        gainNode.gain.setValueAtTime(Math.min(1.0, this.masterVolume * this.sfxVolume), this.ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(this.sfxBus);
+
+        source.onended = () => finish();
+        source.start(0);
+        this.tvRoomAudioSource = source;
+        return;
+      } catch (e) {
+        console.warn('WebAudio buffer source failed for TV room audio, using single HTMLAudio instance:', e);
+      }
+    }
+
+    try {
+      if (!this.tvRoomAudioEl) {
+        this.tvRoomAudioEl = new Audio(this.tvRoomAudioUrl || '/audio/hall(1).mpeg');
+        this.tvRoomAudioEl.preload = 'auto';
+      }
+      this.tvRoomAudioEl.onended = finish;
+      this.tvRoomAudioEl.onerror = finish;
+      this.tvRoomAudioEl.volume = Math.min(1.0, this.masterVolume * this.sfxVolume);
+      this.tvRoomAudioEl.currentTime = 0;
+      this.tvRoomAudioEl.play().catch(() => finish());
+    } catch (e) {
+      console.warn('HTMLAudio fallback failed for TV room sound:', e);
+      finish();
+    }
+  }
+
+  public playHallHorrorSound(): void {
+    this.playTvRoomHorrorSound();
+  }
+
+  /**
+   * GATE UNLOCK & OPEN (Legacy fallback for secondary occult doors):
+   */
+  public playGateUnlockAndOpen(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+    const spatial = this.getSpatialParams(0, 3.5, -22);
+
+    // 1. Padlock release snap
+    const snapOsc = this.ctx.createOscillator();
+    snapOsc.type = 'sawtooth';
+    snapOsc.frequency.setValueAtTime(780, now);
+    snapOsc.frequency.exponentialRampToValueAtTime(180, now + 0.12);
+
+    const snapFilter = this.ctx.createBiquadFilter();
+    snapFilter.type = 'bandpass';
+    snapFilter.frequency.setValueAtTime(450, now);
+    snapFilter.Q.setValueAtTime(2.5, now);
+
+    const snapGain = this.ctx.createGain();
+    snapGain.gain.setValueAtTime(0.0001, now);
+    snapGain.gain.linearRampToValueAtTime(0.045 * spatial.attenuation, now + 0.008);
+    snapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+
+    const panner = this.createPanner(spatial.pan);
+
+    snapOsc.connect(snapFilter);
+    snapFilter.connect(snapGain);
+    snapGain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    snapOsc.start(now);
+    snapOsc.stop(now + 0.2);
+
+    // 2. Chain links falling
+    setTimeout(() => {
+      this.playMetallicChainClink(0.7);
+    }, 140);
+
+    // 3. Deep prolonged gothic gate hinge screech
+    setTimeout(() => {
+      this.playGateCreak(1.0);
+    }, 450);
+
+    setTimeout(() => {
+      this.playGateCreak(0.8);
+    }, 1400);
+  }
+
+  /**
+   * POST-STORY JUMP SCARE HORROR IMPACT:
+   * Terrifying, jarring cinematic horror sting with powerful low-end sub impact,
+   * dissonant screech harmonics, and dark reverberant tail.
+   * Completely clean Web Audio synthesis — zero clipping, zero speaker damage.
+   */
+  public playPostStoryJumpScare(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Visceral sub-bass chest thump (rapid pitch drop 78Hz -> 28Hz)
+    const sub = this.ctx.createOscillator();
+    sub.type = 'sawtooth';
+    sub.frequency.setValueAtTime(82, now);
+    sub.frequency.exponentialRampToValueAtTime(28, now + 0.9);
+
+    const subFilter = this.ctx.createBiquadFilter();
+    subFilter.type = 'lowpass';
+    subFilter.frequency.setValueAtTime(160, now);
+
+    const subGain = this.ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.18, now + 0.015);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+
+    sub.connect(subFilter);
+    subFilter.connect(subGain);
+    subGain.connect(this.sfxBus);
+    sub.start(now);
+    sub.stop(now + 1.45);
+
+    // 2. High-pitch screeching dissonant string cluster (diminished / tritone clash)
+    const pitches = [466.16, 493.88, 659.25, 698.46, 932.33]; // Bb4, B4, E5, F5, Bb5
+    pitches.forEach((freq, idx) => {
+      if (!this.ctx || !this.sfxBus) return;
+      const osc = this.ctx.createOscillator();
+      osc.type = idx % 2 === 0 ? 'sawtooth' : 'triangle';
+      osc.frequency.setValueAtTime(freq, now);
+      // Slight pitch bend upwards into terror
+      osc.frequency.linearRampToValueAtTime(freq * 1.05, now + 0.35);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.92, now + 1.1);
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(freq, now);
+      filter.Q.setValueAtTime(4.0, now);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.038, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+
+      const pan = (idx / (pitches.length - 1)) * 1.6 - 0.8;
+      const panner = this.createPanner(pan);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(panner);
+      panner.connect(this.sfxBus);
+
+      osc.start(now);
+      osc.stop(now + 1.25);
+    });
+
+    // 3. Shivering breath/wind rush
+    if (this.pinkNoiseBuffer) {
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = this.pinkNoiseBuffer;
+
+      const nFilter = this.ctx.createBiquadFilter();
+      nFilter.type = 'bandpass';
+      nFilter.frequency.setValueAtTime(950, now);
+      nFilter.Q.setValueAtTime(1.8, now);
+      nFilter.frequency.exponentialRampToValueAtTime(2800, now + 0.4);
+
+      const nGain = this.ctx.createGain();
+      nGain.gain.setValueAtTime(0.0001, now);
+      nGain.gain.linearRampToValueAtTime(0.045, now + 0.02);
+      nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+
+      noise.connect(nFilter);
+      nFilter.connect(nGain);
+      nGain.connect(this.sfxBus);
+
+      noise.start(now);
+      noise.stop(now + 0.9);
+    }
+  }
+
+  /**
+   * SPATIALIZED GHOSTLY WHISPER:
+   * Eerie, human vocal whisper softly echoing from slightly behind / side of the player.
+   * Uses vocal tract formants.
+   */
+  public playGhostlyWhisper(direction: 'LEFT' | 'RIGHT' | 'BEHIND' = 'BEHIND'): void {
+    if (!this.ctx || !this.sfxBus || !this.pinkNoiseBuffer) return;
+    const now = this.ctx.currentTime;
+    const whisperDuration = 2.4;
+
+    const pan = direction === 'LEFT' ? -0.7 : direction === 'RIGHT' ? 0.7 : (Math.random() > 0.5 ? -0.22 : 0.22);
+
+    // Dual-stage formant vocal filter
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = this.pinkNoiseBuffer;
+
+    // Formant 1: Vowel opening (Ya -> mi -> ni)
+    const f1 = this.ctx.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.frequency.setValueAtTime(720, now);
+    f1.frequency.exponentialRampToValueAtTime(340, now + 0.9);
+    f1.frequency.linearRampToValueAtTime(290, now + whisperDuration);
+    f1.Q.setValueAtTime(5.8, now);
+
+    // Formant 2: High vocal resonance
+    const f2 = this.ctx.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.frequency.setValueAtTime(1380, now);
+    f2.frequency.linearRampToValueAtTime(2150, now + 0.9);
+    f2.frequency.linearRampToValueAtTime(2350, now + whisperDuration);
+    f2.Q.setValueAtTime(6.5, now);
+
+    // Head shadow filter
+    const shadowFilter = this.ctx.createBiquadFilter();
+    shadowFilter.type = 'lowpass';
+    shadowFilter.frequency.setValueAtTime(2600, now);
+
+    const gain = this.ctx.createGain();
+    const whisperVol = 0.024; // Subtle, eerie, intimate
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(whisperVol, now + 0.3);
+    gain.gain.setValueAtTime(whisperVol * 0.9, now + 1.2);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + whisperDuration);
+
+    const panner = this.createPanner(pan);
+
+    noise.connect(f1);
+    f1.connect(f2);
+    f2.connect(shadowFilter);
+    shadowFilter.connect(gain);
+    gain.connect(panner);
+    panner.connect(this.sfxBus);
+
+    noise.start(now);
+    noise.stop(now + whisperDuration + 0.1);
+  }
+
+  /**
+   * Direct control over heartbeat rate and volume for tense horror sequences.
+   */
+  public setHeartbeatDirect(volume: number, bpm: number = 72): void {
+    this.heartbeatTargetVol = Math.max(0, Math.min(0.08, volume));
+    this.heartbeatBpm = Math.max(45, Math.min(130, bpm));
+  }
+
+  /**
+   * HAMMER IMPACT 1: Heavy wooden impact with metal vibration, short hollow echo and wood crack.
+   * Clean cinematic audio without speaker crackle or clipping.
+   */
+  public playHammerHit1(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Heavy low wooden body thud
+    const subOsc = this.ctx.createOscillator();
+    subOsc.type = 'triangle';
+    subOsc.frequency.setValueAtTime(140, now);
+    subOsc.frequency.exponentialRampToValueAtTime(45, now + 0.22);
+
+    const subGain = this.ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.08, now + 0.006);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+
+    subOsc.connect(subGain);
+    subGain.connect(this.sfxBus);
+    subOsc.start(now);
+    subOsc.stop(now + 0.35);
+
+    // 2. Iron hammer head clank / metal ring vibration
+    const metalOsc = this.ctx.createOscillator();
+    metalOsc.type = 'sine';
+    metalOsc.frequency.setValueAtTime(820, now);
+    metalOsc.frequency.exponentialRampToValueAtTime(640, now + 0.45);
+
+    const metalFilter = this.ctx.createBiquadFilter();
+    metalFilter.type = 'bandpass';
+    metalFilter.frequency.setValueAtTime(780, now);
+    metalFilter.Q.setValueAtTime(8.0, now);
+
+    const metalGain = this.ctx.createGain();
+    metalGain.gain.setValueAtTime(0.0001, now);
+    metalGain.gain.linearRampToValueAtTime(0.045, now + 0.005);
+    metalGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.48);
+
+    metalOsc.connect(metalFilter);
+    metalFilter.connect(metalGain);
+    metalGain.connect(this.sfxBus);
+    metalOsc.start(now);
+    metalOsc.stop(now + 0.5);
+
+    // 3. Wood fracture crunch noise
+    if (this.pinkNoiseBuffer) {
+      const crunch = this.ctx.createBufferSource();
+      crunch.buffer = this.pinkNoiseBuffer;
+
+      const cFilter = this.ctx.createBiquadFilter();
+      cFilter.type = 'bandpass';
+      cFilter.frequency.setValueAtTime(1200, now);
+      cFilter.Q.setValueAtTime(3.5, now);
+
+      const cGain = this.ctx.createGain();
+      cGain.gain.setValueAtTime(0.0001, now);
+      cGain.gain.linearRampToValueAtTime(0.04, now + 0.004);
+      cGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+
+      crunch.connect(cFilter);
+      cFilter.connect(cGain);
+      cGain.connect(this.sfxBus);
+      crunch.start(now);
+      crunch.stop(now + 0.2);
+    }
+  }
+
+  /**
+   * HAMMER IMPACT 2: Stronger wood impact, metal creak, low-frequency impact, longer echo.
+   */
+  public playHammerHit2(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Deeper, louder impact thud
+    const subOsc = this.ctx.createOscillator();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(120, now);
+    subOsc.frequency.exponentialRampToValueAtTime(38, now + 0.3);
+
+    const subGain = this.ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.11, now + 0.005);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+
+    subOsc.connect(subGain);
+    subGain.connect(this.sfxBus);
+    subOsc.start(now);
+    subOsc.stop(now + 0.45);
+
+    // 2. Heavy iron plate reverberation
+    const metalOsc = this.ctx.createOscillator();
+    metalOsc.type = 'triangle';
+    metalOsc.frequency.setValueAtTime(540, now);
+    metalOsc.frequency.exponentialRampToValueAtTime(320, now + 0.6);
+
+    const metalFilter = this.ctx.createBiquadFilter();
+    metalFilter.type = 'bandpass';
+    metalFilter.frequency.setValueAtTime(520, now);
+    metalFilter.Q.setValueAtTime(6.0, now);
+
+    const metalGain = this.ctx.createGain();
+    metalGain.gain.setValueAtTime(0.0001, now);
+    metalGain.gain.linearRampToValueAtTime(0.055, now + 0.008);
+    metalGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+
+    metalOsc.connect(metalFilter);
+    metalFilter.connect(metalGain);
+    metalGain.connect(this.sfxBus);
+    metalOsc.start(now);
+    metalOsc.stop(now + 0.7);
+
+    // 3. Strained hinge creak
+    this.playStrainedHingeCreak(0.045);
+  }
+
+  /**
+   * HAMMER IMPACT 3: Violent shattering blow, massive low-end boom followed by dead silence.
+   */
+  public playHammerHit3(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Massive low bass punch
+    const subOsc = this.ctx.createOscillator();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(160, now);
+    subOsc.frequency.exponentialRampToValueAtTime(32, now + 0.4);
+
+    const subGain = this.ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.14, now + 0.006);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+
+    subOsc.connect(subGain);
+    subGain.connect(this.sfxBus);
+    subOsc.start(now);
+    subOsc.stop(now + 0.6);
+
+    // 2. Splintering wood crack
+    if (this.pinkNoiseBuffer) {
+      const crack = this.ctx.createBufferSource();
+      crack.buffer = this.pinkNoiseBuffer;
+
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.setValueAtTime(1400, now);
+      f.Q.setValueAtTime(2.0, now);
+
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(0.065, now + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+
+      crack.connect(f);
+      f.connect(g);
+      g.connect(this.sfxBus);
+      crack.start(now);
+      crack.stop(now + 0.3);
+    }
+  }
+
+  /**
+   * Strained metal hinge creak when the heavy door is struck.
+   */
+  private playStrainedHingeCreak(volume: number): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(210, now + 0.08);
+    osc.frequency.linearRampToValueAtTime(180, now + 0.22);
+    osc.frequency.linearRampToValueAtTime(240, now + 0.38);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(450, now);
+    filter.Q.setValueAtTime(5.0, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(volume, now + 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.sfxBus);
+    osc.start(now);
+    osc.stop(now + 0.48);
+  }
+
+  /**
+   * HIT #3 FINAL JUMP SCARE:
+   * Sharp cinematic horror impact, short female vocal scream/whisper, deep bass hit, sudden wind burst.
+   * Master-limited and smoothed: strictly zero speaker crackle or clipping.
+   */
+  public playHit3FinalJumpscare(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Deep cinematic sub bass hit (impact boom)
+    const subOsc = this.ctx.createOscillator();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(110, now);
+    subOsc.frequency.exponentialRampToValueAtTime(32, now + 0.45);
+
+    const subGain = this.ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.12, now + 0.008);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.9);
+
+    subOsc.connect(subGain);
+    subGain.connect(this.sfxBus);
+    subOsc.start(now);
+    subOsc.stop(now + 0.95);
+
+    // 2. Short, sharp cinematic horror chord string/screech
+    const chordFreqs = [587.33, 622.25, 880.0, 932.33]; // Dissonant minor second clusters (D5, D#5, A5, A#5)
+    for (const freq of chordFreqs) {
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.linearRampToValueAtTime(freq * 0.96, now + 0.7);
+
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(3200, now);
+      f.frequency.exponentialRampToValueAtTime(800, now + 0.65);
+
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(0.022, now + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.75);
+
+      osc.connect(f);
+      f.connect(g);
+      g.connect(this.sfxBus);
+      osc.start(now);
+      osc.stop(now + 0.8);
+    }
+
+    // 3. Short piercing female scream / breath burst (Formant filtered vocal surge)
+    if (this.pinkNoiseBuffer) {
+      const vocalNoise = this.ctx.createBufferSource();
+      vocalNoise.buffer = this.pinkNoiseBuffer;
+
+      const vFormant1 = this.ctx.createBiquadFilter();
+      vFormant1.type = 'bandpass';
+      vFormant1.frequency.setValueAtTime(1050, now);
+      vFormant1.frequency.exponentialRampToValueAtTime(1800, now + 0.25);
+      vFormant1.Q.setValueAtTime(4.5, now);
+
+      const vFormant2 = this.ctx.createBiquadFilter();
+      vFormant2.type = 'bandpass';
+      vFormant2.frequency.setValueAtTime(2600, now);
+      vFormant2.frequency.linearRampToValueAtTime(3400, now + 0.3);
+      vFormant2.Q.setValueAtTime(5.2, now);
+
+      const vGain = this.ctx.createGain();
+      vGain.gain.setValueAtTime(0.0001, now);
+      vGain.gain.linearRampToValueAtTime(0.065, now + 0.012);
+      vGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.68);
+
+      vocalNoise.connect(vFormant1);
+      vFormant1.connect(vFormant2);
+      vFormant2.connect(vGain);
+      vGain.connect(this.sfxBus);
+      vocalNoise.start(now);
+      vocalNoise.stop(now + 0.72);
+
+      // Sudden wind burst
+      const windNoise = this.ctx.createBufferSource();
+      windNoise.buffer = this.pinkNoiseBuffer;
+
+      const wFilter = this.ctx.createBiquadFilter();
+      wFilter.type = 'lowpass';
+      wFilter.frequency.setValueAtTime(800, now);
+      wFilter.frequency.exponentialRampToValueAtTime(250, now + 0.8);
+
+      const wGain = this.ctx.createGain();
+      wGain.gain.setValueAtTime(0.0001, now);
+      wGain.gain.linearRampToValueAtTime(0.05, now + 0.04);
+      wGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+
+      windNoise.connect(wFilter);
+      wFilter.connect(wGain);
+      wGain.connect(this.sfxBus);
+      windNoise.start(now);
+      windNoise.stop(now + 0.9);
+    }
+  }
+
+  /**
+   * BUNGALOW MAIN ENTRANCE DOOR SLOW UNLOCK & SWING OPEN:
+   * Long wooden creak, rusted hinge strain, deep atmospheric groan.
+   */
+  public playBungalowDoorOpen(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Initial lock bolt click / give
+    const clickOsc = this.ctx.createOscillator();
+    clickOsc.type = 'triangle';
+    clickOsc.frequency.setValueAtTime(320, now);
+    clickOsc.frequency.exponentialRampToValueAtTime(90, now + 0.06);
+
+    const clickGain = this.ctx.createGain();
+    clickGain.gain.setValueAtTime(0.0001, now);
+    clickGain.gain.linearRampToValueAtTime(0.06, now + 0.005);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+    clickOsc.connect(clickGain);
+    clickGain.connect(this.sfxBus);
+    clickOsc.start(now);
+    clickOsc.stop(now + 0.15);
+
+    // 2. Slow prolonged heavy wooden door creak (2.8 seconds)
+    const creakOsc = this.ctx.createOscillator();
+    creakOsc.type = 'sawtooth';
+    creakOsc.frequency.setValueAtTime(95, now + 0.2);
+    creakOsc.frequency.linearRampToValueAtTime(140, now + 0.8);
+    creakOsc.frequency.linearRampToValueAtTime(85, now + 1.5);
+    creakOsc.frequency.linearRampToValueAtTime(115, now + 2.2);
+    creakOsc.frequency.linearRampToValueAtTime(65, now + 2.8);
+
+    const creakFilter = this.ctx.createBiquadFilter();
+    creakFilter.type = 'bandpass';
+    creakFilter.frequency.setValueAtTime(380, now + 0.2);
+    creakFilter.Q.setValueAtTime(6.0, now);
+
+    const creakGain = this.ctx.createGain();
+    creakGain.gain.setValueAtTime(0.0001, now);
+    creakGain.gain.linearRampToValueAtTime(0.048, now + 0.5);
+    creakGain.gain.setValueAtTime(0.042, now + 1.8);
+    creakGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.9);
+
+    creakOsc.connect(creakFilter);
+    creakFilter.connect(creakGain);
+    creakGain.connect(this.sfxBus);
+    creakOsc.start(now + 0.15);
+    creakOsc.stop(now + 3.0);
+
+    // 3. Rusted iron hinge groan
+    const hingeOsc = this.ctx.createOscillator();
+    hingeOsc.type = 'triangle';
+    hingeOsc.frequency.setValueAtTime(420, now + 0.3);
+    hingeOsc.frequency.linearRampToValueAtTime(560, now + 1.2);
+    hingeOsc.frequency.linearRampToValueAtTime(380, now + 2.1);
+
+    const hFilter = this.ctx.createBiquadFilter();
+    hFilter.type = 'bandpass';
+    hFilter.frequency.setValueAtTime(480, now);
+    hFilter.Q.setValueAtTime(8.5, now);
+
+    const hGain = this.ctx.createGain();
+    hGain.gain.setValueAtTime(0.0001, now);
+    hGain.gain.linearRampToValueAtTime(0.035, now + 0.6);
+    hGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.4);
+
+    hingeOsc.connect(hFilter);
+    hFilter.connect(hGain);
+    hGain.connect(this.sfxBus);
+    hingeOsc.start(now + 0.25);
+    hingeOsc.stop(now + 2.5);
+  }
+
+  /**
+   * Sound of picking up the heavy iron hammer from the ground/crate.
+   */
+  public playHammerPickup(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // Metallic scrape & wooden clatter
+    const mOsc = this.ctx.createOscillator();
+    mOsc.type = 'triangle';
+    mOsc.frequency.setValueAtTime(680, now);
+    mOsc.frequency.exponentialRampToValueAtTime(240, now + 0.15);
+
+    const mGain = this.ctx.createGain();
+    mGain.gain.setValueAtTime(0.0001, now);
+    mGain.gain.linearRampToValueAtTime(0.04, now + 0.005);
+    mGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+
+    mOsc.connect(mGain);
+    mGain.connect(this.sfxBus);
+    mOsc.start(now);
+    mOsc.stop(now + 0.25);
+  }
+
+  /**
+   * Sudden rapid fluttering wings and eerie high-pitched echolocation chirps/screeches
+   * as a swarm of bats flies out from the bungalow entrance.
+   */
+  public playBatSwarmFlock(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    const now = this.ctx.currentTime;
+
+    // 1. Rapid Wing Fluttering: Bandpass-filtered noise with 14 Hz amplitude modulation
+    const bufferSize = Math.floor(this.ctx.sampleRate * 2.2);
+    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = Math.random() * 2 - 1;
+    }
+
+    const whiteNoise = this.ctx.createBufferSource();
+    whiteNoise.buffer = noiseBuffer;
+
+    const noiseFilter = this.ctx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.setValueAtTime(320, now);
+    noiseFilter.Q.setValueAtTime(1.8, now);
+
+    // AM modulation for flapping rhythm (~14 flaps per second)
+    const flutterLfo = this.ctx.createOscillator();
+    flutterLfo.frequency.setValueAtTime(14.5, now);
+    flutterLfo.frequency.linearRampToValueAtTime(18.0, now + 1.2);
+
+    const flutterDepth = this.ctx.createGain();
+    flutterDepth.gain.setValueAtTime(0.55, now);
+
+    const flutterGain = this.ctx.createGain();
+    flutterGain.gain.setValueAtTime(0.0001, now);
+    flutterGain.gain.linearRampToValueAtTime(0.38, now + 0.12);
+    flutterGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.1);
+
+    flutterLfo.connect(flutterDepth);
+    flutterDepth.connect(flutterGain.gain);
+
+    whiteNoise.connect(noiseFilter);
+    noiseFilter.connect(flutterGain);
+    flutterGain.connect(this.sfxBus);
+
+    whiteNoise.start(now);
+    flutterLfo.start(now);
+    whiteNoise.stop(now + 2.2);
+    flutterLfo.stop(now + 2.2);
+
+    // 2. High-Pitched Bat Echolocation Screeches & Chirps (5 overlapping rapid chirp bursts)
+    const chirpDelays = [0.05, 0.22, 0.48, 0.75, 1.1];
+    chirpDelays.forEach((delay) => {
+      const cNow = now + delay;
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      const filter = this.ctx!.createBiquadFilter();
+
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(2600, cNow);
+      filter.Q.setValueAtTime(3.5, cNow);
+
+      osc.type = 'sine';
+      // Fast downward pitch sweep with vibrato
+      osc.frequency.setValueAtTime(3200 + Math.random() * 800, cNow);
+      osc.frequency.exponentialRampToValueAtTime(1400 + Math.random() * 400, cNow + 0.14);
+
+      gain.gain.setValueAtTime(0.0001, cNow);
+      gain.gain.linearRampToValueAtTime(0.09, cNow + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, cNow + 0.15);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.sfxBus!);
+
+      osc.start(cNow);
+      osc.stop(cNow + 0.16);
+    });
+  }
+
+  /**
+   * Realistic vintage mechanical flashlight toggle switch click
+   */
+  public playFlashlightClick(turnOn = true): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+
+      // 1. Sharp mechanical switch transient (snapping metal contact)
+      const osc = this.ctx.createOscillator();
+      osc.type = 'triangle';
+      const startFreq = turnOn ? 2200 : 1600;
+      const endFreq = turnOn ? 850 : 520;
+      osc.frequency.setValueAtTime(startFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, now + 0.016);
+
+      const oscGain = this.ctx.createGain();
+      oscGain.gain.setValueAtTime(0.0001, now);
+      oscGain.gain.linearRampToValueAtTime(0.18, now + 0.002);
+      oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+
+      osc.connect(oscGain);
+      oscGain.connect(this.sfxBus);
+      osc.start(now);
+      osc.stop(now + 0.05);
+
+      // 2. Heavy casing resonance snap
+      const snapOsc = this.ctx.createOscillator();
+      snapOsc.type = 'sine';
+      snapOsc.frequency.setValueAtTime(turnOn ? 420 : 320, now);
+      snapOsc.frequency.exponentialRampToValueAtTime(110, now + 0.035);
+
+      const snapGain = this.ctx.createGain();
+      snapGain.gain.setValueAtTime(0.0001, now);
+      snapGain.gain.linearRampToValueAtTime(0.12, now + 0.003);
+      snapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+
+      snapOsc.connect(snapGain);
+      snapGain.connect(this.sfxBus);
+      snapOsc.start(now);
+      snapOsc.stop(now + 0.06);
+    } catch (_) {}
+  }
+
+  /**
+   * Metallic chime/rustle when an item (rusty key, battery pack, note) is collected
+   */
+  public playItemPickup(type: 'KEY' | 'BATTERY' | 'DEFAULT' = 'DEFAULT'): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+      if (type === 'KEY') {
+        // High brassy key clink
+        const keyOsc1 = this.ctx.createOscillator();
+        keyOsc1.type = 'triangle';
+        keyOsc1.frequency.setValueAtTime(1420, now);
+        keyOsc1.frequency.exponentialRampToValueAtTime(1260, now + 0.08);
+
+        const keyOsc2 = this.ctx.createOscillator();
+        keyOsc2.type = 'sine';
+        keyOsc2.frequency.setValueAtTime(2840, now);
+        keyOsc2.frequency.exponentialRampToValueAtTime(2100, now + 0.12);
+
+        const keyGain = this.ctx.createGain();
+        keyGain.gain.setValueAtTime(0.0001, now);
+        keyGain.gain.linearRampToValueAtTime(0.14, now + 0.003);
+        keyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+
+        keyOsc1.connect(keyGain);
+        keyOsc2.connect(keyGain);
+        keyGain.connect(this.sfxBus);
+        keyOsc1.start(now);
+        keyOsc2.start(now);
+        keyOsc1.stop(now + 0.38);
+        keyOsc2.stop(now + 0.38);
+      } else if (type === 'BATTERY') {
+        // Cylindrical plastic & metal roll/thud
+        const bOsc = this.ctx.createOscillator();
+        bOsc.type = 'triangle';
+        bOsc.frequency.setValueAtTime(740, now);
+        bOsc.frequency.exponentialRampToValueAtTime(310, now + 0.09);
+
+        const bGain = this.ctx.createGain();
+        bGain.gain.setValueAtTime(0.0001, now);
+        bGain.gain.linearRampToValueAtTime(0.15, now + 0.002);
+        bGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+
+        bOsc.connect(bGain);
+        bGain.connect(this.sfxBus);
+        bOsc.start(now);
+        bOsc.stop(now + 0.25);
+      } else {
+        const dOsc = this.ctx.createOscillator();
+        dOsc.type = 'sine';
+        dOsc.frequency.setValueAtTime(880, now);
+        dOsc.frequency.exponentialRampToValueAtTime(440, now + 0.1);
+        const dGain = this.ctx.createGain();
+        dGain.gain.setValueAtTime(0.0001, now);
+        dGain.gain.linearRampToValueAtTime(0.1, now + 0.003);
+        dGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+        dOsc.connect(dGain);
+        dGain.connect(this.sfxBus);
+        dOsc.start(now);
+        dOsc.stop(now + 0.28);
+      }
+    } catch (_) {}
+  }
+
+  /**
+   * Subtle wooden thud and light clink when an object is placed on the central table
+   */
+  public playItemPlacement(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+      // 1. Warm wood contact thud
+      const thudOsc = this.ctx.createOscillator();
+      thudOsc.type = 'triangle';
+      thudOsc.frequency.setValueAtTime(220, now);
+      thudOsc.frequency.exponentialRampToValueAtTime(55, now + 0.14);
+
+      const thudGain = this.ctx.createGain();
+      thudGain.gain.setValueAtTime(0.0001, now);
+      thudGain.gain.linearRampToValueAtTime(0.18, now + 0.004);
+      thudGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+
+      thudOsc.connect(thudGain);
+      thudGain.connect(this.sfxBus);
+      thudOsc.start(now);
+      thudOsc.stop(now + 0.30);
+
+      // 2. Light porcelain/metal tap
+      const tapOsc = this.ctx.createOscillator();
+      tapOsc.type = 'sine';
+      tapOsc.frequency.setValueAtTime(1420, now);
+      tapOsc.frequency.exponentialRampToValueAtTime(980, now + 0.06);
+
+      const tapGain = this.ctx.createGain();
+      tapGain.gain.setValueAtTime(0.0001, now);
+      tapGain.gain.linearRampToValueAtTime(0.08, now + 0.002);
+      tapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+      tapOsc.connect(tapGain);
+      tapGain.connect(this.sfxBus);
+      tapOsc.start(now);
+      tapOsc.stop(now + 0.15);
+    } catch (_) {}
+  }
+
+  /**
+   * Plays official secret door.mpeg SFX when secret door unlocks and opens.
+   */
+  public playSecretDoorUnlock(): void {
+    this.playSecretDoorSfx();
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+
+      // 1. Deep seismic subsonic rumble (45Hz down to 28Hz)
+      const rumbleOsc = this.ctx.createOscillator();
+      rumbleOsc.type = 'sawtooth';
+      rumbleOsc.frequency.setValueAtTime(45, now);
+      rumbleOsc.frequency.linearRampToValueAtTime(32, now + 2.5);
+
+      const rumbleFilter = this.ctx.createBiquadFilter();
+      rumbleFilter.type = 'lowpass';
+      rumbleFilter.frequency.setValueAtTime(120, now);
+      rumbleFilter.frequency.linearRampToValueAtTime(80, now + 2.8);
+
+      const rumbleGain = this.ctx.createGain();
+      rumbleGain.gain.setValueAtTime(0.0001, now);
+      rumbleGain.gain.linearRampToValueAtTime(0.35, now + 0.25);
+      rumbleGain.gain.linearRampToValueAtTime(0.30, now + 2.0);
+      rumbleGain.gain.exponentialRampToValueAtTime(0.0001, now + 3.2);
+
+      rumbleOsc.connect(rumbleFilter);
+      rumbleFilter.connect(rumbleGain);
+      rumbleGain.connect(this.sfxBus);
+      rumbleOsc.start(now);
+      rumbleOsc.stop(now + 3.4);
+
+      // 2. Grinding stone friction noise
+      const bufferSize = Math.floor(this.ctx.sampleRate * 2.8);
+      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      let lastOut = 0.0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        output[i] = (lastOut + 0.02 * white) / 1.02; // Brown noise
+        lastOut = output[i];
+      }
+
+      const noiseSource = this.ctx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+
+      const noiseFilter = this.ctx.createBiquadFilter();
+      noiseFilter.type = 'bandpass';
+      noiseFilter.frequency.setValueAtTime(240, now);
+      noiseFilter.Q.setValueAtTime(3.0, now);
+
+      const noiseGain = this.ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.0001, now);
+      noiseGain.gain.linearRampToValueAtTime(0.22, now + 0.15);
+      noiseGain.gain.linearRampToValueAtTime(0.18, now + 2.2);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.9);
+
+      noiseSource.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(this.sfxBus);
+      noiseSource.start(now);
+      noiseSource.stop(now + 3.0);
+    } catch (_) {}
+  }
+
+  /**
+   * Bag zipping / leather satchel opening sound for Inventory UI toggle
+   */
+  public playInventoryToggle(open = true): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+      // Leather satchel flap / rustle sound
+      const lOsc = this.ctx.createOscillator();
+      lOsc.type = 'triangle';
+      lOsc.frequency.setValueAtTime(open ? 260 : 380, now);
+      lOsc.frequency.exponentialRampToValueAtTime(open ? 480 : 180, now + 0.09);
+
+      const lGain = this.ctx.createGain();
+      lGain.gain.setValueAtTime(0.0001, now);
+      lGain.gain.linearRampToValueAtTime(0.12, now + 0.004);
+      lGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+
+      lOsc.connect(lGain);
+      lGain.connect(this.sfxBus);
+      lOsc.start(now);
+      lOsc.stop(now + 0.16);
+    } catch (_) {}
+  }
+
+  /**
+   * Sound of stone trapdoor collapsing / cracking open beneath the player
+   */
+  public playTrapdoorCollapse(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+
+      // 1. Heavy stone slab friction & grind
+      const stoneOsc = this.ctx.createOscillator();
+      stoneOsc.type = 'sawtooth';
+      stoneOsc.frequency.setValueAtTime(65, now);
+      stoneOsc.frequency.exponentialRampToValueAtTime(32, now + 0.65);
+
+      const stoneFilter = this.ctx.createBiquadFilter();
+      stoneFilter.type = 'lowpass';
+      stoneFilter.frequency.setValueAtTime(280, now);
+      stoneFilter.frequency.exponentialRampToValueAtTime(95, now + 0.65);
+
+      const stoneGain = this.ctx.createGain();
+      stoneGain.gain.setValueAtTime(0.0001, now);
+      stoneGain.gain.linearRampToValueAtTime(0.35, now + 0.04);
+      stoneGain.gain.exponentialRampToValueAtTime(0.001, now + 0.70);
+
+      stoneOsc.connect(stoneFilter);
+      stoneFilter.connect(stoneGain);
+      stoneGain.connect(this.sfxBus);
+      stoneOsc.start(now);
+      stoneOsc.stop(now + 0.75);
+
+      // 2. Wood cracking / fracturing snap
+      const snapBuffer = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * 0.45), this.ctx.sampleRate);
+      const snapData = snapBuffer.getChannelData(0);
+      for (let i = 0; i < snapData.length; i++) {
+        snapData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * 0.05));
+      }
+      const snapSource = this.ctx.createBufferSource();
+      snapSource.buffer = snapBuffer;
+
+      const snapFilter = this.ctx.createBiquadFilter();
+      snapFilter.type = 'bandpass';
+      snapFilter.frequency.setValueAtTime(1400, now);
+      snapFilter.Q.setValueAtTime(2.5, now);
+
+      const snapGain = this.ctx.createGain();
+      snapGain.gain.setValueAtTime(0.32, now);
+      snapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.40);
+
+      snapSource.connect(snapFilter);
+      snapFilter.connect(snapGain);
+      snapGain.connect(this.sfxBus);
+      snapSource.start(now);
+
+      // 3. Cavernous rushing air intake
+      const rushBuffer = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * 1.2), this.ctx.sampleRate);
+      const rushData = rushBuffer.getChannelData(0);
+      for (let i = 0; i < rushData.length; i++) {
+        rushData[i] = (Math.random() * 2 - 1);
+      }
+      const rushSource = this.ctx.createBufferSource();
+      rushSource.buffer = rushBuffer;
+
+      const rushFilter = this.ctx.createBiquadFilter();
+      rushFilter.type = 'lowpass';
+      rushFilter.frequency.setValueAtTime(450, now);
+      rushFilter.frequency.linearRampToValueAtTime(180, now + 1.1);
+
+      const rushGain = this.ctx.createGain();
+      rushGain.gain.setValueAtTime(0.0001, now);
+      rushGain.gain.linearRampToValueAtTime(0.28, now + 0.15);
+      rushGain.gain.exponentialRampToValueAtTime(0.001, now + 1.15);
+
+      rushSource.connect(rushFilter);
+      rushFilter.connect(rushGain);
+      rushGain.connect(this.sfxBus);
+      rushSource.start(now);
+    } catch (_) {}
+  }
+
+  /**
+   * Controlled falling rushing air sound as player drops down the chute
+   */
+  public playFloorTrapFall(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+      const dur = 1.35;
+
+      const windBuf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+      const d = windBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) {
+        d[i] = Math.random() * 2 - 1;
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = windBuf;
+
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.setValueAtTime(650, now);
+      f.frequency.linearRampToValueAtTime(260, now + dur);
+      f.Q.setValueAtTime(1.8, now);
+
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(0.38, now + 0.25);
+      g.gain.linearRampToValueAtTime(0.44, now + dur * 0.75);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+      src.connect(f);
+      f.connect(g);
+      g.connect(this.sfxBus);
+      src.start(now);
+      src.stop(now + dur + 0.05);
+    } catch (_) {}
+  }
+
+  /**
+   * Deep heavy impact landing thud when player hits the basement stone floor safely
+   */
+  public playHeavyLandingThud(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+
+      // 1. Sub-bass punch (44Hz deep impact thud)
+      const subOsc = this.ctx.createOscillator();
+      subOsc.type = 'sine';
+      subOsc.frequency.setValueAtTime(75, now);
+      subOsc.frequency.exponentialRampToValueAtTime(36, now + 0.28);
+
+      const subGain = this.ctx.createGain();
+      subGain.gain.setValueAtTime(0.0001, now);
+      subGain.gain.linearRampToValueAtTime(0.65, now + 0.012);
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+      subOsc.connect(subGain);
+      subGain.connect(this.sfxBus);
+      subOsc.start(now);
+      subOsc.stop(now + 0.50);
+
+      // 2. Heavy boot leather & stone crunch
+      const crunchBuf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * 0.35), this.ctx.sampleRate);
+      const cData = crunchBuf.getChannelData(0);
+      for (let i = 0; i < cData.length; i++) {
+        cData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * 0.06));
+      }
+      const cSource = this.ctx.createBufferSource();
+      cSource.buffer = crunchBuf;
+
+      const cFilter = this.ctx.createBiquadFilter();
+      cFilter.type = 'lowpass';
+      cFilter.frequency.setValueAtTime(550, now);
+      cFilter.frequency.exponentialRampToValueAtTime(140, now + 0.30);
+
+      const cGain = this.ctx.createGain();
+      cGain.gain.setValueAtTime(0.48, now);
+      cGain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+
+      cSource.connect(cFilter);
+      cFilter.connect(cGain);
+      cGain.connect(this.sfxBus);
+      cSource.start(now);
+
+      // 3. Faint breath exhalation on impact
+      const breathBuf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * 0.55), this.ctx.sampleRate);
+      const bData = breathBuf.getChannelData(0);
+      for (let i = 0; i < bData.length; i++) {
+        bData[i] = (Math.random() * 2 - 1);
+      }
+      const bSource = this.ctx.createBufferSource();
+      bSource.buffer = breathBuf;
+
+      const bFilter = this.ctx.createBiquadFilter();
+      bFilter.type = 'bandpass';
+      bFilter.frequency.setValueAtTime(380, now + 0.05);
+      bFilter.Q.setValueAtTime(2.0, now);
+
+      const bGain = this.ctx.createGain();
+      bGain.gain.setValueAtTime(0.0001, now + 0.05);
+      bGain.gain.linearRampToValueAtTime(0.18, now + 0.12);
+      bGain.gain.exponentialRampToValueAtTime(0.001, now + 0.50);
+
+      bSource.connect(bFilter);
+      bFilter.connect(bGain);
+      bGain.connect(this.sfxBus);
+      bSource.start(now + 0.05);
+    } catch (_) {}
+  }
+
+  /**
+   * Low subterranean ambient tone in the underground basement
+   */
+  public startBasementDrone(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+      const bOsc = this.ctx.createOscillator();
+      bOsc.type = 'sine';
+      bOsc.frequency.setValueAtTime(38, now);
+
+      const bFilter = this.ctx.createBiquadFilter();
+      bFilter.type = 'lowpass';
+      bFilter.frequency.setValueAtTime(90, now);
+
+      const bGain = this.ctx.createGain();
+      bGain.gain.setValueAtTime(0.0001, now);
+      bGain.gain.linearRampToValueAtTime(0.15, now + 2.5);
+
+      bOsc.connect(bFilter);
+      bFilter.connect(bGain);
+      bGain.connect(this.sfxBus);
+      bOsc.start(now);
+    } catch (_) {}
+  }
+
+  /**
+   * Distant metallic creak / echoing pipe groan in the basement
+   */
+  public playBasementCreak(): void {
+    if (!this.ctx || !this.sfxBus) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(110, now);
+      osc.frequency.exponentialRampToValueAtTime(85, now + 1.2);
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(320, now);
+      filter.Q.setValueAtTime(6.0, now);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.09, now + 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.sfxBus);
+      osc.start(now);
+      osc.stop(now + 1.4);
+    } catch (_) {}
+  }
+
+  /**
+   * Resets all room sound playback states, safety timers, and stops playing elements cleanly.
+   */
+  public resetAllRoomSounds(): void {
+    if (this.kitchenSafetyTimeout) clearTimeout(this.kitchenSafetyTimeout);
+    if (this.bathroomSafetyTimeout) clearTimeout(this.bathroomSafetyTimeout);
+    if (this.storeRoomSafetyTimeout) clearTimeout(this.storeRoomSafetyTimeout);
+    if (this.gateToBungalowSafetyTimeout) clearTimeout(this.gateToBungalowSafetyTimeout);
+    if (this.startingSafetyTimeout) clearTimeout(this.startingSafetyTimeout);
+    if (this.gateOpeningSafetyTimeout) clearTimeout(this.gateOpeningSafetyTimeout);
+    if (this.lampSafetyTimeout) clearTimeout(this.lampSafetyTimeout);
+    if (this.lampResumeTimeout) clearTimeout(this.lampResumeTimeout);
+    if (this.secretDoorSafetyTimeout) clearTimeout(this.secretDoorSafetyTimeout);
+    if (this.secretDoorResumeTimeout) clearTimeout(this.secretDoorResumeTimeout);
+    if (this.hallSafetyTimeout) clearTimeout(this.hallSafetyTimeout);
+    if (this.hallResumeTimeout) clearTimeout(this.hallResumeTimeout);
+    if (this.tvRoomSafetyTimeout) clearTimeout(this.tvRoomSafetyTimeout);
+    if (this.tvRoomResumeTimeout) clearTimeout(this.tvRoomResumeTimeout);
+
+    this.kitchenSafetyTimeout = null;
+    this.bathroomSafetyTimeout = null;
+    this.storeRoomSafetyTimeout = null;
+    this.gateToBungalowSafetyTimeout = null;
+    this.startingSafetyTimeout = null;
+    this.gateOpeningSafetyTimeout = null;
+    this.lampSafetyTimeout = null;
+    this.lampResumeTimeout = null;
+    this.secretDoorSafetyTimeout = null;
+    this.secretDoorResumeTimeout = null;
+    this.hallSafetyTimeout = null;
+    this.hallResumeTimeout = null;
+    this.tvRoomSafetyTimeout = null;
+    this.tvRoomResumeTimeout = null;
+
+    this.isKitchenPlaying = false;
+    this.isBathroomPlaying = false;
+    this.isStoreRoomPlaying = false;
+    this.isGateToBungalowPlaying = false;
+    this.isStartingPlaying = false;
+    this.isGateOpeningPlaying = false;
+    this.isLampSfxPlaying = false;
+    this.isSecretDoorPlaying = false;
+    this.hasPlayedSecretDoorAudio = false;
+    this.isHallPlaying = false;
+    this.hasPlayedHallAudio = false;
+    this.isTvRoomPlaying = false;
+    this.hasPlayedTvRoomAudio = false;
+
+    const sources = [
+      this.kitchenAudioSource,
+      this.bathroomAudioSource,
+      this.storeRoomAudioSource,
+      this.gateToBungalowAudioSource,
+      this.startingAudioSource,
+      this.gateOpeningAudioSource,
+      this.lampAudioSource,
+      this.secretDoorAudioSource,
+      this.hallAudioSource,
+      this.tvRoomAudioSource,
+    ];
+    sources.forEach((src) => {
+      if (src) {
+        try {
+          src.onended = null;
+          src.stop();
+          src.disconnect();
+        } catch (_) {}
+      }
+    });
+    this.kitchenAudioSource = null;
+    this.bathroomAudioSource = null;
+    this.storeRoomAudioSource = null;
+    this.gateToBungalowAudioSource = null;
+    this.startingAudioSource = null;
+    this.gateOpeningAudioSource = null;
+    this.lampAudioSource = null;
+    this.secretDoorAudioSource = null;
+    this.hallAudioSource = null;
+    this.tvRoomAudioSource = null;
+
+    const elements = [
+      this.kitchenAudioEl,
+      this.bathroomAudioEl,
+      this.storeRoomAudioEl,
+      this.gateToBungalowAudioEl,
+      this.startingAudioEl,
+      this.gateOpeningAudioEl,
+      this.lampAudioEl,
+      this.secretDoorAudioEl,
+      this.hallAudioEl,
+      this.tvRoomAudioEl,
+    ];
+    elements.forEach((el) => {
+      if (el) {
+        try {
+          el.onended = null;
+          el.onerror = null;
+          el.pause();
+          el.currentTime = 0;
+        } catch (_) {}
+      }
+    });
+
+    this.isBgmPausedForRoom = false;
+    this.activeRoomSounds = 0;
+  }
+
+  public dispose(): void {
+    this.isEventManagerRunning = false;
+    this.isHeartbeatRunning = false;
+    if (this.eventTimeoutId) clearTimeout(this.eventTimeoutId);
+    if (this.heartbeatIntervalId) clearTimeout(this.heartbeatIntervalId);
+
+    this.resetAllRoomSounds();
+    this.stopMainBgm();
+
+    if (this.droneOsc1) {
+      try { this.droneOsc1.stop(); } catch (_) {}
+    }
+    if (this.droneOsc2) {
+      try { this.droneOsc2.stop(); } catch (_) {}
+    }
+    if (this.droneOscSub) {
+      try { this.droneOscSub.stop(); } catch (_) {}
+    }
+    if (this.droneEerieOsc) {
+      try { this.droneEerieOsc.stop(); } catch (_) {}
+    }
+    if (this.windLfo) {
+      try { this.windLfo.stop(); } catch (_) {}
+    }
+    if (this.windSource) {
+      try { this.windSource.stop(); } catch (_) {}
+    }
+    if (this.rainSource) {
+      try { this.rainSource.stop(); } catch (_) {}
+    }
+
+    if (this.ctx && this.ctx.state !== 'closed') {
+      try {
+        this.ctx.close();
+      } catch (_) {}
+    }
+    this.ctx = null;
+    this.isInitialized = false;
+    this.initPromise = null;
+  }
+}
+
+export const horrorAudio = new HorrorAudioManager();

@@ -17,9 +17,15 @@
     "allowJs": true,
     "jsx": "react-jsx",
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./frontend/*"],
+      "@frontend/*": ["./frontend/*"],
+      "@backend/*": ["./backend/*"],
+      "@shared/*": ["./shared/*"],
+      "@game/*": ["./frontend/game/*"],
+      "@systems/*": ["./frontend/systems/*"],
+      "@components/*": ["./frontend/components/*"],
+      "@screens/*": ["./frontend/screens/*"],
+      "@assets/*": ["./frontend/assets/*"]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
